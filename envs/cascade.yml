@@ -1,0 +1,15 @@
+# Conda env for CASCADE spike inference (stage 2).
+# CPU-only builds — no CUDA. Versions are placeholders; pin exact ones when filling in.
+name: cascade
+channels:
+  - conda-forge
+dependencies:
+  - python=3.9
+  - numpy
+  - scipy
+  - pyyaml
+  - h5py
+  - pip
+  - pip:
+      # - tensorflow-cpu==<pin>        # or torch CPU, whichever CASCADE build uses
+      # - cascade @ git+https://github.com/<cascade-repo>   # TODO: pin source

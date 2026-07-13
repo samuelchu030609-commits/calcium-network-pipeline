@@ -1,0 +1,14 @@
+{
+  "_comment": "Copy this to config.json inside your recording folder and edit. Tells the pipeline how to process this recording. See docs/SUITE2P_SETTINGS.md for how to pick native_fps and indicator.",
+
+  "indicator": "SS9 jGCaMP8s",
+  "_indicator_options": "SS9 jGCaMP8s | SS10 jGCaMP8f | Fluo-4 AM | Fluo-4 (mp4)",
+
+  "native_fps": 50,
+  "_native_fps_help": "True frame rate from the TIF timestamps, NOT the Suite2p GUI default.",
+
+  "route": "cascade_gc8s",
+  "_route_options": "cascade_gc8s (jGCaMP8s -> downsample 45Hz + CASCADE GC8s) | cascade_gc8f (jGCaMP8f) | dff (Fluo-4 dye -> dF/F event detection, no CASCADE)",
+
+  "neuropil_coeff": 0.7
+}

@@ -1,0 +1,14 @@
+# Conda env for the event + network metrics step (stage 3).
+# Versions are placeholders; pin exact ones when filling in.
+name: analysis
+channels:
+  - conda-forge
+dependencies:
+  - python=3.10
+  - numpy
+  - scipy
+  - pandas
+  - scikit-learn        # PCA/ICA assembly detection
+  - openpyxl            # xlsx writing
+  - matplotlib          # baseline QC plots
+  - pip

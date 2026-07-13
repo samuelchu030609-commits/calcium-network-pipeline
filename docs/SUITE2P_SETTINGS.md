@@ -1,0 +1,78 @@
+# Running Suite2p to match this pipeline
+
+You run Suite2p yourself, once per recording, to turn your TIFs into a
+`suite2p/plane0/` folder. This pipeline then takes that folder.
+
+The detection settings below are **not** Suite2p's defaults — they are the
+choices this project standardized on. If you use the defaults you will get
+different cells (Suite2p's default activity-based detection misses quiet/silent
+neurons), and your results won't be comparable to everyone else's.
+
+> **Fastest, least error-prone option:** in the Suite2p GUI, load
+> [`../settings/pipeline_settings.npy`](../settings/pipeline_settings.npy) instead
+> of setting these by hand. Then only adjust `fs` and `tau` for your recording
+> (see below). The table is here so you understand *what* you're loading.
+
+## 1. Install Suite2p
+
+Follow the official Suite2p installation instructions (their GitHub project).
+Any recent version with Cellpose (`cpsam`) detection support works. The
+Cellpose model downloads automatically on first run.
+
+## 2. Detection settings — copy these EXACTLY (same for every recording)
+
+| Setting                 | Value       | Why                                            |
+|-------------------------|-------------|------------------------------------------------|
+| Detection algorithm     | `cellpose`  | Anatomical detection, not default `sparsery`   |
+| Cellpose model          | `cpsam`     | Cellpose-SAM (~1.2 GB, auto-downloads)         |
+| Image for detection     | `meanImg`   | Pure anatomy → includes silent cells           |
+| Diameter                | `12` px     | Target single somata, not colonies             |
+| `flow_threshold`        | `0.4`       |                                                |
+| `cellprob_threshold`    | `0.0`       |                                                |
+| `cellpose_chan2`        | off / False | Single channel                                 |
+
+Rationale: activity-based detection under-counts quiet KOLF neurons; lowering its
+threshold adds false positives that aren't shape-separable. Anatomical detection
+on the mean image finds cells by shape regardless of activity, giving an unbiased
+denominator for "% of cells active."
+
+## 3. Set these per YOUR recording — you decide, based on your data
+
+Two settings you set yourself, because they depend on your recording, not on our
+standardized choices:
+
+**`fs` — the true frame rate.** Read it from the TIF per-frame timestamps. Do NOT
+trust the value the Suite2p GUI pre-fills; it is whatever was typed at acquisition
+and is often wrong.
+
+**`tau` — the calcium decay timescale of your indicator.** This is a property of
+the sensor you used, so set it to match your indicator. Detection bins the movie by
+`round(tau*fs)`, so a wrong `tau` starves detection on short clips — pick the value
+for your sensor rather than leaving the Suite2p default (1.0, a GCaMP6s value).
+
+| Indicator                | Recommended `tau` | Note                                   |
+|--------------------------|-------------------|----------------------------------------|
+| Fluo-4 AM (dye)          | `0.25`            |                                        |
+| jGCaMP8s (SS9)           | `0.25`            | fast decay; what this project used     |
+| jGCaMP8f (SS10)          | `≤0.25`           | faster than 8s — use a smaller value   |
+| GCaMP6s / slower sensors | `~1.0–1.5`        | Suite2p's default 1.0 is for this class |
+| other                    | your sensor's decay time constant | look it up for your indicator |
+
+These are starting defaults, not law — if you know your indicator's decay constant
+or have measured it, use that.
+
+## 4. Run
+
+Set the data path to your TIF folder, Run. When it finishes you'll have a
+`suite2p/plane0/` folder. Point this pipeline at the folder that contains
+`suite2p/` (see the main [README](../README.md)).
+
+## 5. Sanity check before moving on
+
+- Open the ROIs over the mean image — you should see compact round somata, not
+  giant blobs (colonies) or speckle.
+- Cell count should be in the expected range for your field (hundreds, not
+  single digits or thousands).
+
+*(Screenshot of the GUI detection panel with these fields circled: TODO — add
+`docs/img/suite2p_detection.png`.)*

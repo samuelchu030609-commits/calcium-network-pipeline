@@ -1,0 +1,26 @@
+# ── Data: users bring their own; never commit ──────────────────────────
+*.tif
+*.tiff
+*.mp4
+*.bin
+*.npy
+*.xlsx
+*.png
+suite2p/
+!settings/pipeline_settings.npy      # the one .npy we DO ship (Suite2p settings backup)
+
+# ── Models: large, auto-downloaded or baked into the image ─────────────
+Pretrained_models/
+*.pth
+*.zip
+
+# ── Python / env cruft ─────────────────────────────────────────────────
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+.venv/
+.DS_Store
+
+# ── Local config a user fills in ───────────────────────────────────────
+config.json
+!config.example.json
