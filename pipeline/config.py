@@ -8,11 +8,17 @@ import json
 import os
 from dataclasses import dataclass
 
-# route -> (CASCADE model family, downsample target Hz). None target = native rate.
-ROUTES = {
-    "cascade_gc8s": ("GC8s", 45),   # jGCaMP8s: GC8s model exists only at 45 Hz
-    "cascade_gc8f": ("GC8f", 45),   # jGCaMP8f (future SS10)
-    "dff": (None, None),            # Fluo-4 dye: no CASCADE model -> dF/F events
+# route -> CASCADE model family. run_cascade auto-resamples the data to the model's
+# training rate internally, so there is NO separate downsample step / sibling folder.
+#   GC8s (jGCaMP8s, SRS9): clean models exist at 45 Hz  -> acquire/analyze at 45 Hz
+#   GC8f (jGCaMP8f, SRS10): only clean model is at 100 Hz -> acquire at 100 Hz;
+#                           do NOT downsample the fast indicator.
+#   dff : Fluo-4 dye. Legacy dF/F0-only path, no CASCADE (out-of-distribution for
+#         synthetic dyes). Retired going forward; kept for old recordings.
+ROUTE_FAMILY = {
+    "cascade_gc8s": "GC8s",
+    "cascade_gc8f": "GC8f",
+    "dff": None,
 }
 
 
@@ -29,11 +35,8 @@ class RecordingConfig:
 
     @property
     def cascade_family(self):
-        return ROUTES[self.route][0]
-
-    @property
-    def cascade_target_hz(self):
-        return ROUTES[self.route][1]
+        """CASCADE --family for this route (GC8s / GC8f), or None for dff."""
+        return ROUTE_FAMILY[self.route]
 
 
 class ConfigError(Exception):
@@ -65,9 +68,9 @@ def load_config(folder: str) -> RecordingConfig:
     if missing:
         raise ConfigError(f"config.json is missing required keys: {', '.join(missing)}")
 
-    if data["route"] not in ROUTES:
+    if data["route"] not in ROUTE_FAMILY:
         raise ConfigError(
-            f"Unknown route {data['route']!r}. Must be one of: {', '.join(ROUTES)}."
+            f"Unknown route {data['route']!r}. Must be one of: {', '.join(ROUTE_FAMILY)}."
         )
 
     try:
@@ -77,12 +80,12 @@ def load_config(folder: str) -> RecordingConfig:
     if fps <= 0:
         raise ConfigError(f"native_fps must be > 0, got {fps}.")
 
-    # Soft sanity check: dye indicator should use dff, GECI should use cascade.
+    # Soft sanity check: CASCADE is GCaMP-only; a dye must use the dff route.
     ind = str(data["indicator"]).lower()
     if "fluo" in ind and data["route"] != "dff":
         raise ConfigError(
             f"Indicator {data['indicator']!r} looks like a dye but route is "
-            f"{data['route']!r}; Fluo-4 has no CASCADE model. Use route 'dff'."
+            f"{data['route']!r}; CASCADE is GCaMP-only. Use route 'dff'."
         )
 
     return RecordingConfig(

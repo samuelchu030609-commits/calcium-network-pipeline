@@ -40,25 +40,21 @@ def run(data_dir: str) -> str:
     print(f"[pipeline] {data_dir}")
     print(f"[pipeline] indicator={cfg.indicator}  fps={cfg.native_fps}  route={cfg.route}")
 
-    metrics_input = plane0
     if cfg.uses_cascade:
-        # --- stage 2: (optional downsample ->) CASCADE ---
-        # NOTE: run_cascade internals are being rewritten elsewhere; this call is
-        # the stable contract. When it needs the cascade conda env, replace the
-        # direct import with:  conda run -n cascade python -m pipeline.run_cascade ...
+        # --- stage 2: CASCADE (auto-resamples to the model rate internally) ---
+        # Writes cascade_spike_prob.npy + cascade_meta.json INTO plane0 (no sibling
+        # folder). When it needs the cascade conda env, replace the direct import
+        # with:  conda run -n cascade python -m pipeline.run_cascade <plane0> ...
         from .run_cascade import run_cascade
-        metrics_input = run_cascade(
-            plane0,
-            family=cfg.cascade_family,
-            native_fps=cfg.native_fps,
-            target_hz=cfg.cascade_target_hz,
-        )
+        run_cascade(plane0, family=cfg.cascade_family, fps=cfg.native_fps)
     else:
-        print("[pipeline] dff route: skipping CASCADE (no model for this indicator)")
+        print("[pipeline] dff route: skipping CASCADE (GCaMP-only; dye uses dF/F0)")
 
     # --- stage 3: event + network metrics -> xlsx ---
+    # Reads cascade_spike_prob.npy from plane0 if present (rate from cascade_meta.json),
+    # else falls back to dF/F0 peak detection.
     from .run_metrics import run_metrics
-    xlsx = run_metrics(metrics_input, cfg)
+    xlsx = run_metrics(plane0, cfg)
     print(f"[pipeline] wrote {xlsx}")
     return xlsx
 

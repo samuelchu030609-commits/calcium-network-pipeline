@@ -4,15 +4,22 @@
 project ("event_analysis_template.ipynb"). It is a STUB. Fill in from the
 FINALIZED version. See docs/DEV.md.
 
+The real analysis is the notebook, driven by its first cell:
+    suite2p_folder = Path(".")        # the plane0 folder
+    output_prefix  = "RUNID_metrics"  # names the workbook -> RUNID_metrics.xlsx
+It uses cascade_spike_prob.npy if present (reading the TRUE rate from
+cascade_meta.json), else falls back to dF/F0 peak detection. Port it to a script
+or drive the notebook with papermill using those two parameters.
+
 Contract the orchestrator depends on (keep this signature stable):
 
     run_metrics(plane0_dir, config) -> str
 
-  - plane0_dir : plane0 to read (for cascade routes, the folder run_cascade
-                 returned, which contains cascade_spike_prob.npy)
+  - plane0_dir : plane0 to read (contains cascade_spike_prob.npy + cascade_meta.json
+                 for cascade routes)
   - config     : RecordingConfig (pipeline.config) — indicator, route, fps,
                  neuropil_coeff
-  - returns    : path to the written <id>_metrics.xlsx
+  - returns    : path to the written <prefix>_metrics.xlsx
 
 Output sheets:
   - per-cell : event rate, % active, STTC_to_population

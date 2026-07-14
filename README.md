@@ -1,20 +1,30 @@
 # Calcium Network Pipeline
 
-Turn a Suite2p output folder into a per-cell + network-level metrics workbook
-(`*_metrics.xlsx`) for calcium-imaging recordings of iNeurons.
+Quantifies activity and network **synchronization** in human iPSC-derived iNeurons
+imaged by widefield GCaMP fluorescence. Built for the KCNT1 epilepsy model
+(WT vs KCNT1-mutant KOLF2.1 iNeurons, Lippmann Lab, Vanderbilt), but general to any
+Suite2p-segmented GCaMP recording.
 
-It runs **CASCADE** spike inference and an event/synchrony analysis (dF/F events,
-STTC synchrony, FDR-controlled connectivity) and writes one Excel workbook per
-recording.
+It takes a Suite2p output folder and produces one Excel metrics workbook per
+recording (ΔF/F₀, event/spike trains, burst & network-burst metrics, co-activity,
+STTC synchrony, FDR-controlled functional connectivity, cell assemblies).
+
+**Flow:** microscope movie → **Suite2p** (motion correction + ROI segmentation) →
+**CASCADE** (calibrated spike inference) → **metrics notebook** → `*_metrics.xlsx`.
+
+> **CASCADE is used only for GCaMP (genetically-encoded) recordings** — it is trained
+> on GECIs and is out-of-distribution for synthetic dyes. Synthetic-dye (Fluo-4)
+> recordings are supported through a ΔF/F₀-only legacy path (`route: dff`) but are
+> retired going forward.
 
 ---
 
 ## How the pipeline is split
 
-There are three stages. **You run Suite2p yourself; this tool does the rest.**
+Three stages. **You run Suite2p yourself; this tool does the rest.**
 
 ```
-  YOUR MACHINE (once, per recording)          THIS TOOL (Docker, one command)
+  YOUR MACHINE (once, per recording)          THIS TOOL
   ┌───────────────────────────────┐          ┌──────────────────────────────┐
   │ 1. Suite2p                     │          │ 2. CASCADE spike inference    │
   │    TIFs ──▶ suite2p/plane0/    │  ──────▶ │ 3. Event + network metrics    │
@@ -23,39 +33,79 @@ There are three stages. **You run Suite2p yourself; this tool does the rest.**
   └───────────────────────────────┘          └──────────────────────────────┘
 ```
 
-- **Stage 1 (Suite2p)** is *not* bundled here. Install Suite2p from its official
-  project and run it with our exact detection settings — see
-  [`docs/SUITE2P_SETTINGS.md`](docs/SUITE2P_SETTINGS.md). This produces a
-  `suite2p/plane0/` folder.
-- **Stages 2–3** run inside a CPU-only Docker container, so there is nothing to
-  install beyond Docker itself. You point it at your `plane0` folder and it
-  writes the Excel workbook back into that folder.
-
-Why Suite2p is separate: it's a large, well-documented tool with its own
-installer, and running it is interactive (you check the ROIs). Bundling it would
-duplicate their install and complicate the container for no gain.
+Stage 1 (Suite2p) is **not** bundled — install it from its official project and run
+it with our detection settings ([`docs/SUITE2P_SETTINGS.md`](docs/SUITE2P_SETTINGS.md)).
+CASCADE (`cascade2p`, Rupprecht et al. 2021) is third-party too and is installed, not
+vendored.
 
 ---
 
-## Quickstart (end users)
+## Two ways to run stages 2–3
 
-**1. Install Docker Desktop** (one time). See [`docs/INSTALL.md`](docs/INSTALL.md).
+### A. Docker (for non-coders / Windows) — *image pending*
+One command, nothing to install but Docker Desktop:
+```
+./run.sh /path/to/recording          # macOS / Linux
+run.bat  C:\path\to\recording         # Windows
+```
+It reads a `config.json` in the recording folder (copy
+[`config.example.json`](config.example.json)) and writes `*_metrics.xlsx` into
+`suite2p/plane0/`. See [`docs/INSTALL.md`](docs/INSTALL.md).
+*(The published image is built once the analysis code below is vendored in — see Status.)*
 
-**2. Run Suite2p on your TIFs** with our settings
-([`docs/SUITE2P_SETTINGS.md`](docs/SUITE2P_SETTINGS.md)). You'll get a
-`suite2p/plane0/` folder next to your data.
+### B. Manual (for developers) — the working path today
+Run the two stages directly in their conda envs.
 
-**3. Create a `config.json`** in that folder describing the recording (copy
-[`config.example.json`](config.example.json) and edit the indicator / frame rate).
+**Stage 2 — CASCADE (GCaMP only):** converts fluorescence to a *calibrated* spike
+probability, replacing Suite2p's raw OASIS `spks.npy`.
+```bash
+# dedicated cascade env (Python 3.10, TensorFlow 2.15, NumPy 1.26)
+python run_cascade.py "/path/to/suite2p/plane0" --fps 45 --family GC8s
+```
+Options: `--fps HZ` (defaults to `ops['fs']`), `--family {Global,GC8s,GC8f,GC8m}`,
+`--indicator {EXC,INH}` (default EXC), `--no-resample` (leave off).
 
-**4. Run the pipeline** — point it at the folder that contains `suite2p/`:
+**Frame-rate / model-rate matching (automatic).** CASCADE is only calibrated when the
+model's training rate matches the data rate, so `run_cascade.py` picks a clean model
+for the family and **resamples ΔF/F to the model rate before inference**. This is why
+the two GCaMP8 indicators differ:
+- **jGCaMP8s (SRS9):** clean GC8s models at **45 Hz** → acquire/analyze at 45 Hz.
+- **jGCaMP8f (SRS10):** only clean GC8f model is at **100 Hz** → acquire at 100 Hz and
+  run the native model. **Do not downsample jGCaMP8f** — it is the fast indicator;
+  downsampling discards the kinetics the model was trained on.
 
-- **macOS / Linux:** `./run.sh /path/to/recording`
-- **Windows:** double-click `run.bat`, or `run.bat C:\path\to\recording`
+Outputs, written into the plane0 folder (no sibling folder):
+- `cascade_spike_prob.npy` — `(n_cells × n_frames)` float32, rows in `F[iscell]` order;
+  first/last frames are `NaN` (trace edges, handled downstream).
+- `cascade_meta.json` — provenance incl. the **true** spike-probability rate the
+  notebook reads (so it never assumes the wrong rate after resampling).
 
-Output: `..._metrics.xlsx` appears inside `suite2p/plane0/`.
+> First run on a new indicator downloads the model from `drive.switch.ch`. On an
+> offline analysis machine, pre-download it once (e.g. `GC8f_EXC_100Hz_smoothing10ms`).
 
-*(Advanced users can skip the wrapper: `docker run --rm -v "<folder>:/data" ghcr.io/samuelchu030609-commits/calcium-network-pipeline /data`.)*
+**Stage 3 — metrics notebook.** Open `event_analysis_template.ipynb`, set two things
+in cell 1, run all cells:
+```python
+suite2p_folder = Path(".")          # the plane0 folder
+output_prefix  = "RUNID_metrics"    # names the output workbook
+```
+If `cascade_spike_prob.npy` is present it's used automatically (rate from
+`cascade_meta.json`); otherwise it falls back to ΔF/F₀ peak detection. It exports one
+combined workbook `RUNID_metrics.xlsx` (friendly "Key Numbers" sheets + technical sheets).
+
+---
+
+## Output metrics
+
+Per-recording `*_metrics.xlsx`:
+- **Per-cell:** event/spike rate, % active, `STTC_to_population` (how coupled each cell is).
+- **Network:** STTC synchrony reported as **z-score vs a circular-shift null** (not raw
+  mean STTC), Pearson (secondary), population coupling, cell assemblies (power-guarded),
+  per-pair functional connectivity (Benjamini–Hochberg FDR), network bursts.
+
+Analysis helpers live in `pipeline/pipeline_fixes.py` — CASCADE readouts (discrete
+spikes / MAD events / continuous rate), drift-corrected ΔF/F₀, STTC, and FDR
+connectivity. See the docstring there for the full function list.
 
 ---
 
@@ -64,43 +114,55 @@ Output: `..._metrics.xlsx` appears inside `suite2p/plane0/`.
 ```
 calcium-network-pipeline/
 ├── README.md                 ← you are here
-├── run.sh / run.bat          ← end-user wrappers around `docker run`
-├── config.example.json       ← per-recording indicator / frame-rate template
+├── LICENSE                   ← MIT
+├── run.sh / run.bat          ← end-user Docker wrappers
+├── config.example.json       ← per-recording indicator / frame-rate / route template
 ├── docs/
 │   ├── INSTALL.md            ← install Docker (Windows + Mac)
 │   ├── SUITE2P_SETTINGS.md   ← how to run Suite2p to match our detection
-│   └── TROUBLESHOOTING.md
-├── settings/
-│   └── pipeline_settings.npy ← load-this-instead backup of the Suite2p settings
-├── pipeline/                 ← the actual analysis code (stages 2–3)
-│   ├── run_pipeline.py       ← container entrypoint: CASCADE → metrics
-│   ├── run_cascade.py        ← CASCADE spike inference
+│   ├── TROUBLESHOOTING.md
+│   └── DEV.md                ← sync boundary + how to fill in the code
+├── settings/pipeline_settings.npy  ← load-this-instead backup of Suite2p settings
+├── pipeline/                 ← analysis code (stages 2–3)
+│   ├── run_pipeline.py       ← orchestrator: CASCADE → metrics, routed by config
+│   ├── run_cascade.py        ← CASCADE spike inference (GCaMP only)
 │   ├── run_metrics.py        ← event + network metrics → xlsx
-│   ├── pipeline_fixes.py     ← shared helpers (baseline, FDR connectivity, …)
-│   └── config.py             ← reads config.json, routes by indicator
-├── envs/
-│   ├── cascade.yml           ← conda env for CASCADE
-│   └── analysis.yml          ← conda env for the metrics step
-├── docker/
-│   ├── Dockerfile            ← CPU-only image, both envs + models baked in
-│   └── entrypoint.sh
-└── examples/
-    └── README.md             ← expected input layout + a tiny sample
+│   ├── pipeline_fixes.py     ← shared helpers (baseline, STTC, FDR, CASCADE readouts)
+│   └── config.py             ← reads/validates config.json, routes by indicator
+├── envs/{cascade,analysis}.yml
+└── docker/{Dockerfile,entrypoint.sh}
 ```
 
-## What the output contains
+## Requirements
 
-Per-recording `*_metrics.xlsx`:
-- **Per-cell:** event rate, % active, `STTC_to_population` (how coupled each cell is)
-- **Network:** mean STTC synchrony reported as `STTC_excess_over_chance` with
-  z-score and p-value, coactive fraction, FDR-controlled connectivity, assembly
-  detection (guarded for short clips)
+- **Suite2p** — segmentation, run separately (stage 1).
+- **CASCADE** (`cascade2p`) + its `Pretrained_models` at `~/Cascade`. Dedicated conda
+  env: Python 3.10, TensorFlow 2.15, NumPy 1.26.
+- **Metrics notebook:** numpy, scipy, pandas, matplotlib, scikit-learn, openpyxl, and
+  `pipeline_fixes.py` on the path.
+
+(The Docker image bundles both envs so end users need none of this.)
+
+## Scientific-methods notes
+
+- **CASCADE only for GCaMP** — not Fluo-4 or other synthetic dyes.
+- **Prefer the discrete-spike method** over any fixed spike-probability threshold; a hard
+  cutoff isn't comparable across recordings (spike-prob amplitude scales with SNR / rate).
+- **Report the STTC z-score, not raw mean STTC,** when comparing conditions.
+- **No per-pair connectivity claims on short, sparse recordings without FDR control** —
+  the connectivity graph uses Benjamini–Hochberg and the assembly step is power-guarded.
+- **Recording length matters** — very short clips leave many cells underpowered for
+  pairwise statistics.
+
+## References
+- Rupprecht et al. (2021) *Nat. Neurosci.* — CASCADE calibrated spike inference.
+- Cutts & Eglen (2014) *J. Neurosci.* — spike-time tiling coefficient (STTC).
+- Okun et al. (2015) *Nature* — population coupling.
+- Benjamini & Hochberg (1995) — false-discovery-rate control.
 
 ## Status
 
-Scaffold. The `pipeline/` scripts are stubs to be filled in — see the TODOs in
-each file and [`docs/DEV.md`](docs/DEV.md).
-
-## License
-
-MIT — see [`LICENSE`](LICENSE).
+The analysis code is **finalized in the parent project** and being vendored into
+`pipeline/` — those files are currently stubs whose signatures match the real scripts
+(sync boundary in [`docs/DEV.md`](docs/DEV.md)). Once vendored (with machine-specific
+paths made portable), the Docker image is built and published to GHCR.
