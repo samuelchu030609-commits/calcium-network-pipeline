@@ -53,8 +53,8 @@ for your sensor rather than leaving the Suite2p default (1.0, a GCaMP6s value).
 | Indicator                | Recommended `tau` | Note                                   |
 |--------------------------|-------------------|----------------------------------------|
 | Fluo-4 AM (dye)          | `0.25`            |                                        |
-| jGCaMP8s (SS9)           | `0.25`            | fast decay; what this project used     |
-| jGCaMP8f (SS10)          | `≤0.25`           | faster than 8s — use a smaller value   |
+| jGCaMP8s (SRS9)          | `0.25`            | fast decay; what this project used     |
+| jGCaMP8f (SRS10)         | `≤0.25`           | faster than 8s — use a smaller value   |
 | GCaMP6s / slower sensors | `~1.0–1.5`        | Suite2p's default 1.0 is for this class |
 | other                    | your sensor's decay time constant | look it up for your indicator |
 

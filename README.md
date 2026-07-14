@@ -17,6 +17,17 @@ STTC synchrony, FDR-controlled functional connectivity, cell assemblies).
 > recordings are supported through a ΔF/F₀-only legacy path (`route: dff`) but are
 > retired going forward.
 
+### Indicators / constructs
+
+Lentiviral construct names follow the lab's Lentivirus transduction record:
+
+| Name | Construct | Modality | Pipeline route |
+|---|---|---|---|
+| **SRS9** | `hSyn-jGCaMP8s` | Calcium (GECI, slower) | `cascade_gc8s` |
+| **SRS10** | `hSyn-jGCaMP8f` | Calcium (GECI, fast) | `cascade_gc8f` |
+| **SRS11** | `hSyn-ASAP4e-kV` | **Voltage** sensor | *not supported* — different modality |
+| Fluo-4 AM | synthetic dye | Calcium (dye) | `dff` (legacy, retired) |
+
 ---
 
 ## How the pipeline is split

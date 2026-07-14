@@ -1,8 +1,8 @@
 {
   "_comment": "Copy this to config.json inside your recording folder and edit. Tells the pipeline how to process this recording. See docs/SUITE2P_SETTINGS.md for how to pick native_fps.",
 
-  "indicator": "SS9 jGCaMP8s",
-  "_indicator_options": "SS9 jGCaMP8s | SS10 jGCaMP8f | Fluo-4 AM (legacy)",
+  "indicator": "SRS9 jGCaMP8s",
+  "_indicator_options": "SRS9 jGCaMP8s (hSyn-jGCaMP8s) | SRS10 jGCaMP8f (hSyn-jGCaMP8f) | Fluo-4 AM (legacy dye). SRS11 = hSyn-ASAP4e-kV is a VOLTAGE sensor and is not handled by this pipeline. Construct names per Lentivirus transduction doc.",
 
   "native_fps": 100,
   "_native_fps_help": "This recording's OWN true frame rate, read from the TIF timestamps (NOT the Suite2p GUI default). It changes every recording — set it each time; do not assume a fixed value per indicator.",
