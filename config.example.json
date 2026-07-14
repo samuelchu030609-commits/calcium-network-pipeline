@@ -4,12 +4,12 @@
   "indicator": "SS9 jGCaMP8s",
   "_indicator_options": "SS9 jGCaMP8s | SS10 jGCaMP8f | Fluo-4 AM (legacy)",
 
-  "native_fps": 45,
-  "_native_fps_help": "True frame rate from the TIF timestamps, NOT the Suite2p GUI default. jGCaMP8s: acquire/analyze at 45 Hz. jGCaMP8f: acquire at 100 Hz (do NOT downsample the fast indicator).",
+  "native_fps": 100,
+  "_native_fps_help": "This recording's OWN true frame rate, read from the TIF timestamps (NOT the Suite2p GUI default). It changes every recording — set it each time; do not assume a fixed value per indicator.",
 
   "route": "cascade_gc8s",
-  "_route_options": "cascade_gc8s (jGCaMP8s -> CASCADE GC8s, model rate 45 Hz) | cascade_gc8f (jGCaMP8f -> CASCADE GC8f, model rate 100 Hz) | dff (Fluo-4 dye -> dF/F0 event detection, no CASCADE; legacy, retired going forward)",
-  "_route_help": "CASCADE auto-resamples the data to the model rate internally; no separate downsample step. CASCADE is GCaMP-only.",
+  "_route_options": "cascade_gc8s (jGCaMP8s -> CASCADE GC8s) | cascade_gc8f (jGCaMP8f -> CASCADE GC8f) | dff (Fluo-4 dye -> dF/F0 event detection, no CASCADE; legacy, retired going forward)",
+  "_route_help": "You choose the FAMILY (by indicator), not a rate. run_cascade picks the pretrained model for that family and resamples this recording's data (from native_fps) to the model's rate automatically. CASCADE is GCaMP-only.",
 
   "neuropil_coeff": 0.7
 }

@@ -60,19 +60,27 @@ Run the two stages directly in their conda envs.
 probability, replacing Suite2p's raw OASIS `spks.npy`.
 ```bash
 # dedicated cascade env (Python 3.10, TensorFlow 2.15, NumPy 1.26)
-python run_cascade.py "/path/to/suite2p/plane0" --fps 45 --family GC8s
+# --fps is THIS recording's true rate (e.g. 100); CASCADE resamples to the model rate itself
+python run_cascade.py "/path/to/suite2p/plane0" --fps 100 --family GC8s
 ```
 Options: `--fps HZ` (defaults to `ops['fs']`), `--family {Global,GC8s,GC8f,GC8m}`,
 `--indicator {EXC,INH}` (default EXC), `--no-resample` (leave off).
 
-**Frame-rate / model-rate matching (automatic).** CASCADE is only calibrated when the
-model's training rate matches the data rate, so `run_cascade.py` picks a clean model
-for the family and **resamples ΔF/F to the model rate before inference**. This is why
-the two GCaMP8 indicators differ:
-- **jGCaMP8s (SRS9):** clean GC8s models at **45 Hz** → acquire/analyze at 45 Hz.
-- **jGCaMP8f (SRS10):** only clean GC8f model is at **100 Hz** → acquire at 100 Hz and
-  run the native model. **Do not downsample jGCaMP8f** — it is the fast indicator;
-  downsampling discards the kinetics the model was trained on.
+**Frame-rate / model-rate matching (automatic).** There are two rates, and only one is
+fixed. Your **acquisition rate changes every recording** — pass it as `--fps` (read from
+the TIF; never assume a value per indicator). CASCADE is only calibrated when the
+**model's** training rate matches the data, so `run_cascade.py` picks the clean model for
+the family and **resamples your ΔF/F to that model's rate before inference**. You pick the
+*family*, not a rate; the target rate is a property of the available CASCADE models:
+- **jGCaMP8s (SRS9):** the current clean GC8s model is at **45 Hz**, so 8s recordings —
+  whatever they were acquired at — get resampled to 45 Hz for inference.
+- **jGCaMP8f (SRS10):** the current clean GC8f model is at **100 Hz**, so 8f recordings get
+  matched to 100 Hz. **Never downsample jGCaMP8f toward 45** — it's the fast indicator and
+  that would discard the kinetics the model was trained on.
+
+These target rates (45 / 100) are today's model rates, not fixed acquisition rates — if
+CASCADE ships new models they change, which is why `run_cascade` selects them at runtime
+rather than hardcoding.
 
 Outputs, written into the plane0 folder (no sibling folder):
 - `cascade_spike_prob.npy` — `(n_cells × n_frames)` float32, rows in `F[iscell]` order;
