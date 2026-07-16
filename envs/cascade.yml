@@ -1,15 +1,23 @@
 # Conda env for CASCADE spike inference (stage 2).
-# CPU-only builds — no CUDA. Versions are placeholders; pin exact ones when filling in.
+# CPU-only build — no CUDA. Pins below match the verified working parent-project
+# env that reproduces the authoritative numbers (python 3.10, TF 2.15.1).
+#
+# LOAD-BEARING: TensorFlow 2.15 requires numpy<2. Keep numpy pinned to 1.26.x —
+# an unpinned solve can pull numpy 2.x and break TF at import time.
 name: cascade
 channels:
   - conda-forge
 dependencies:
-  - python=3.9
-  - numpy
-  - scipy
-  - pyyaml
-  - h5py
+  - python=3.10
+  - numpy=1.26.4          # <2 required by TF 2.15
+  - scipy=1.15.3
+  - h5py=3.16.0
+  - ruamel.yaml           # CASCADE reads model config with ruamel.yaml (not pyyaml)
   - pip
   - pip:
-      # - tensorflow-cpu==<pin>        # or torch CPU, whichever CASCADE build uses
-      # - cascade @ git+https://github.com/<cascade-repo>   # TODO: pin source
+      - tensorflow==2.15.1
+      # CASCADE (cascade2p) is NOT on PyPI. Either install from source:
+      - cascade2p @ git+https://github.com/HelmchenLabSoftware/Cascade
+      # ...or (what the parent project does) git-clone the repo and add it to
+      # PYTHONPATH. The Pretrained_models/ are downloaded separately — bake them
+      # into the image at build time (see docs/DEV.md "Models").

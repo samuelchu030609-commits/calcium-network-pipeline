@@ -74,5 +74,22 @@ Set the data path to your TIF folder, Run. When it finishes you'll have a
 - Cell count should be in the expected range for your field (hundreds, not
   single digits or thousands).
 
-*(Screenshot of the GUI detection panel with these fields circled: TODO — add
-`docs/img/suite2p_detection.png`.)*
+## 6. Load these settings automatically
+
+Rather than entering the fields above by hand, load the canonical settings file
+directly in the Suite2p GUI (File → Load ops/settings):
+
+    settings/pipeline_settings.npy
+
+This is a real Suite2p settings dict captured from the reference run (recording
+2169), so it reproduces the exact detection/extraction parameters this pipeline
+was validated against. **After loading, override only `fs` and `tau` for your
+own recording** — those two are per-recording; everything else
+(Cellpose/meanImg/diameter/flow/cellprob/max_overlap/neuropil) is the shared,
+copy-exactly part. The orchestrator (`run_pipeline.py`) reads your recording's
+`ops.npy` and warns loudly if these detection settings drifted from the
+canonical set, so a mismatch can't silently make your numbers non-comparable.
+
+*(A GUI screenshot of the detection panel with these fields circled would live at
+`docs/img/suite2p_detection.png` — add one from your own Suite2p session; the
+`.gitignore` already permits `docs/**/*.png`.)*

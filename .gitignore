@@ -7,7 +7,14 @@
 *.xlsx
 *.png
 suite2p/
-!settings/pipeline_settings.npy      # the one .npy we DO ship (Suite2p settings backup)
+# NOTE: .gitignore does NOT support inline comments — a `#` after a pattern
+# becomes part of the pattern. Every negation below is on its own bare line.
+# The one .npy we DO ship (canonical Suite2p detection settings backup):
+!settings/pipeline_settings.npy
+# Documentation screenshots ARE committed:
+!docs/**/*.png
+# Example-output figures ARE committed:
+!examples/**/*.png
 
 # ── Models: large, auto-downloaded or baked into the image ─────────────
 Pretrained_models/

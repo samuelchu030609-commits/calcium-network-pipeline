@@ -1,14 +1,17 @@
 # Conda env for the event + network metrics step (stage 3).
-# Versions are placeholders; pin exact ones when filling in.
+# Pins match the verified working parent-project env. numpy is held <2 for
+# consistency with the cascade env and because some deps still expect the 1.x ABI.
 name: analysis
 channels:
   - conda-forge
 dependencies:
   - python=3.10
-  - numpy
-  - scipy
-  - pandas
-  - scikit-learn        # PCA/ICA assembly detection
-  - openpyxl            # xlsx writing
-  - matplotlib          # baseline QC plots
+  - numpy=1.26.4
+  - scipy=1.15.3
+  - pandas=2.3.3
+  - matplotlib=3.10.9   # baseline QC plots (run headless via Agg in run_metrics.py)
+  - openpyxl            # styled xlsx writing; run_metrics falls back to CSV sheets if absent
+  - jinja2              # pandas Styler backend for the styled workbook
   - pip
+# NOTE: cell-assembly detection (PCA + Marchenko–Pastur + ICA) is implemented with
+# numpy (np.linalg.eigh + a hand-rolled fastica) — scikit-learn is NOT required.

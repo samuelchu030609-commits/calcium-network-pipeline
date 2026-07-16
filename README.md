@@ -62,7 +62,7 @@ run.bat  C:\path\to\recording         # Windows
 It reads a `config.json` in the recording folder (copy
 [`config.example.json`](config.example.json)) and writes `*_metrics.xlsx` into
 `suite2p/plane0/`. See [`docs/INSTALL.md`](docs/INSTALL.md).
-*(The published image is built once the analysis code below is vendored in — see Status.)*
+*(The image bundles both conda envs and the CASCADE models, so the first run needs no internet — see Status.)*
 
 ### B. Manual (for developers) — the working path today
 Run the two stages directly in their conda envs.
@@ -99,8 +99,10 @@ Outputs, written into the plane0 folder (no sibling folder):
 - `cascade_meta.json` — provenance incl. the **true** spike-probability rate the
   notebook reads (so it never assumes the wrong rate after resampling).
 
-> First run on a new indicator downloads the model from `drive.switch.ch`. On an
-> offline analysis machine, pre-download it once (e.g. `GC8f_EXC_100Hz_smoothing10ms`).
+> The Docker image bakes the GC8s + GC8f models in at build time, so a containerized
+> first run needs no internet. Running **outside** the container on a fresh machine,
+> the first run on a new indicator downloads the model from `drive.switch.ch`; on an
+> offline analysis machine pre-download it once (e.g. `GC8f_EXC_100Hz_smoothing10ms`).
 
 **Stage 3 — metrics notebook.** Open `event_analysis_template.ipynb`, set two things
 in cell 1, run all cells:
@@ -181,7 +183,25 @@ calcium-network-pipeline/
 
 ## Status
 
-The analysis code is **finalized in the parent project** and being vendored into
-`pipeline/` — those files are currently stubs whose signatures match the real scripts
-(sync boundary in [`docs/DEV.md`](docs/DEV.md)). Once vendored (with machine-specific
-paths made portable), the Docker image is built and published to GHCR.
+The analysis code is **vendored from the parent project** into `pipeline/` and runs
+end-to-end: `run_pipeline.py` drives `run_cascade.py` → `run_metrics.py` using the
+shared `pipeline_fixes.py` helpers, reproducing the parent project's authoritative
+numbers on a real recording (verified on the SS9 jGCaMP8s D83 set). When the parent
+CASCADE/metrics code changes, re-sync the three volatile files without touching their
+fixed signatures — see the sync boundary in [`docs/DEV.md`](docs/DEV.md).
+
+The Docker image bakes the CASCADE `Pretrained_models` (GC8s + GC8f) in at build time
+for an offline first run. Cellpose `cpsam` is deliberately **not** baked: ROI detection
+(stage 1) runs in the user's own Suite2p GUI, not in this container, so the image never
+loads it. The canonical detection settings ship instead as
+[`settings/pipeline_settings.npy`](settings) — load them in the Suite2p GUI, and
+`run_pipeline.py` warns loudly if a recording's detection settings drift from them.
+
+An end-to-end acceptance test ships under [`examples/`](examples): `bash
+examples/acceptance_test.sh` generates a small synthetic recording with known planted
+structure, runs the full pipeline, and asserts the structure is recovered — verifying an
+install/container without real data.
+
+The one remaining nicety before a tagged release: a Suite2p detection-panel screenshot
+in `docs/SUITE2P_SETTINGS.md` (a GUI capture from your own session; `.gitignore` already
+permits `docs/**/*.png`).
