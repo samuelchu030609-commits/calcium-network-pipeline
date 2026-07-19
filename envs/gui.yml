@@ -1,0 +1,14 @@
+# Conda env for the optional stages 2-3 GUI (gui/app.py).
+# Deliberately SEPARATE from the verified `analysis` env: the GUI process only
+# needs streamlit + a spreadsheet reader, and it shells out to the analysis /
+# cascade envs to do the real work. Keeping it apart means installing the GUI
+# never perturbs the numbers-producing envs.
+name: gui
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - streamlit>=1.30
+  - pandas
+  - openpyxl        # read the output workbook to show "Key Numbers"
+  - numpy           # optional: read ops.npy for the frame-rate hint

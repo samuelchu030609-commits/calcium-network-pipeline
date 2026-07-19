@@ -31,3 +31,6 @@ __pycache__/
 # ── Local config a user fills in ───────────────────────────────────────
 config.json
 !config.example.json
+
+# ── GUI: remembered execution settings (per-machine) ───────────────────
+gui/settings.local.json
