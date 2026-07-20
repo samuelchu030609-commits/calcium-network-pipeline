@@ -12,3 +12,5 @@ dependencies:
   - pandas
   - openpyxl        # read the output workbook to show "Key Numbers"
   - numpy           # optional: read ops.npy for the frame-rate hint
+  - scipy           # optional: Mann-Whitney contrast in the Compare tab
+  - tifffile        # optional: read true frame rate from raw TIF timestamps

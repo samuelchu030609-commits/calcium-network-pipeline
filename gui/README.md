@@ -29,11 +29,16 @@ Everything runs **locally**. No files are uploaded anywhere — the GUI reads yo
 data straight from disk, which is why it works on large recordings and on a
 shared lab machine.
 
-## Two modes
+## Three modes
 
-At the top, switch between **Single recording** and **Batch queue**.
+At the top, switch between **Single recording**, **Batch queue**, and
+**Compare recordings**.
 
-- **Single recording** — the one-at-a-time flow described above.
+- **Single recording** — the one-at-a-time flow described above. The frame-rate
+  field has a **📷 Read from raw file** button that reads the *true* rate from the
+  raw movie's own timestamps (Suite2p's stored `fs` is unreliable). It works on
+  MetaSeries/MetaMorph TIFs today; for ND2 it tells you to install the `nd2`
+  package. It only fills the suggestion — you still see and confirm the number.
 - **Batch queue** — process several recordings back-to-back. Build the queue two
   ways:
   - **Scan a parent folder** — point it at a folder (e.g. a day's imaging session)
@@ -46,6 +51,14 @@ At the top, switch between **Single recording** and **Batch queue**.
   processes them one after another, showing a live log per recording and a
   summary (`N/N succeeded`) with a download button for each `*_metrics.xlsx`.
   Recordings run sequentially, so a shared lab machine isn't overloaded.
+- **Compare recordings** — pool several finished `*_metrics.xlsx` into one
+  **group-comparison** workbook (e.g. WT vs KCNT1). Scan a folder for workbooks
+  (or add them one at a time), give each a **group label** (you assign these —
+  genotype isn't read from the files), and **Build comparison**. The output has a
+  per-recording table, per-group means ± SD, and — for a two-group design — a
+  contrast with an exploratory Mann-Whitney p (computed only at n ≥ 3 per group).
+  It warns if you mix event sources (CASCADE vs dF/F0), which aren't comparable.
+  Also available on the command line: `python -m pipeline.run_group --scan PARENT`.
 
 ## First-time setup
 

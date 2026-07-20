@@ -51,6 +51,16 @@ vendored.
 
 ---
 
+## Point-and-click GUI (easiest)
+
+Prefer not to touch the command line? A small local app in [`gui/`](gui/) drives
+stages 2–3 for you — pick the recording folder, choose the indicator from a
+dropdown (no editing `config.json`), and run; it shows the friendly *Key Numbers*
+and the `.xlsx`. It also has a **batch** mode (queue many recordings) and a
+**compare** mode (pool workbooks into a WT-vs-KCNT1 group comparison). Launch with
+`./gui/run_gui.sh` (macOS/Linux) or `gui\run_gui.bat` (Windows). See
+[`gui/README.md`](gui/README.md).
+
 ## Two ways to run stages 2–3
 
 ### A. Docker (for non-coders / Windows) — *image pending*
@@ -127,6 +137,20 @@ Per-recording `*_metrics.xlsx`:
 Analysis helpers live in `pipeline/pipeline_fixes.py` — CASCADE readouts (discrete
 spikes / MAD events / continuous rate), drift-corrected ΔF/F₀, STTC, and FDR
 connectivity. See the docstring there for the full function list.
+
+### Group comparison (across recordings)
+
+To compare conditions (e.g. WT vs KCNT1), pool several `*_metrics.xlsx` into one
+workbook with `pipeline/run_group.py` — per-group means ± SD and a two-group
+contrast (with an exploratory Mann-Whitney p at n ≥ 3/group). It reads only the
+finished workbooks' machine-readable `Summary` sheet and warns if event sources
+are mixed (CASCADE spikes vs dF/F0 aren't comparable). You assign the groups.
+
+```bash
+python -m pipeline.run_group --scan /path/to/session --out group_comparison.xlsx
+# or explicit: python -m pipeline.run_group A.xlsx:WT B.xlsx:WT C.xlsx:KCNT1
+```
+Also available as the **Compare recordings** tab in the [GUI](gui/README.md).
 
 ---
 

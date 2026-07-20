@@ -26,6 +26,16 @@ GUI_DIR = Path(__file__).resolve().parent
 REPO_ROOT = GUI_DIR.parent                      # calcium-network-pipeline/
 SETTINGS_PATH = GUI_DIR / "settings.local.json"  # remembers how to run (git-ignored)
 
+# Make the `pipeline` package importable (raw_rate reader, run_group comparison).
+import sys as _sys
+if str(REPO_ROOT) not in _sys.path:
+    _sys.path.insert(0, str(REPO_ROOT))
+try:
+    from pipeline.raw_rate import rate_from_raw
+except Exception:  # keep the GUI usable even if the optional reader can't import
+    def rate_from_raw(_folder):
+        return None, "raw-rate reader unavailable (could not import pipeline.raw_rate)"
+
 # ── Indicator → route table (mirrors config.example.json / config.py) ──────
 # The user picks an indicator in plain language; we derive the route slug so
 # nobody has to know "cascade_gc8s". This is the single source of that mapping
@@ -244,6 +254,26 @@ FRIENDLY_SHEETS = ["Key Numbers", "How to Read This",
                    "Group Events (bursts)", "Teams (assemblies)"]
 
 
+XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+
+def show_sheet_html(xls, name) -> None:
+    """Render one Excel sheet as an HTML table (no pyarrow dependency)."""
+    import pandas as pd
+    df = pd.read_excel(xls, name, header=None).fillna("")
+    html = df.to_html(index=False, header=False, na_rep="", border=0,
+                      classes="cnp-table", escape=True)
+    st.markdown(
+        "<style>"
+        ".cnp-table{border-collapse:collapse;width:100%;font-size:0.92rem;}"
+        ".cnp-table td{border:1px solid rgba(128,128,128,.25);padding:4px 10px;"
+        "text-align:left;vertical-align:top;}"
+        ".cnp-table tr:first-child td{font-weight:600;}"
+        "</style>" + html,
+        unsafe_allow_html=True,
+    )
+
+
 def render_results(xlsx_path: Path) -> None:
     import pandas as pd
     try:
@@ -255,24 +285,10 @@ def render_results(xlsx_path: Path) -> None:
     st.success(f"Done — workbook written to:\n`{xlsx_path}`")
     with open(xlsx_path, "rb") as fh:
         st.download_button("⬇ Download the metrics workbook (.xlsx)", fh,
-                           file_name=xlsx_path.name,
-                           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                           file_name=xlsx_path.name, mime=XLSX_MIME)
 
     def show_sheet(name: str) -> None:
-        # Render as an HTML table rather than st.dataframe/st.table so we don't
-        # depend on pyarrow (some conda/anaconda bases ship a broken pyarrow).
-        df = pd.read_excel(xls, name, header=None).fillna("")
-        html = df.to_html(index=False, header=False, na_rep="", border=0,
-                          classes="cnp-table", escape=True)
-        st.markdown(
-            "<style>"
-            ".cnp-table{border-collapse:collapse;width:100%;font-size:0.92rem;}"
-            ".cnp-table td{border:1px solid rgba(128,128,128,.25);padding:4px 10px;"
-            "text-align:left;vertical-align:top;}"
-            ".cnp-table tr:first-child td{font-weight:600;}"
-            "</style>" + html,
-            unsafe_allow_html=True,
-        )
+        show_sheet_html(xls, name)
 
     if "Key Numbers" in xls.sheet_names:
         st.subheader("Key Numbers")
@@ -431,14 +447,44 @@ def single_recording_ui(settings: dict) -> None:
     st.caption(sel["note"])
 
     ops_fs = read_ops_hint(plane0).get("fs") if (plane0 and ok) else None
-    default_fps = float(ops_fs) if ops_fs else 45.0
-    fps = st.number_input(
-        "Acquisition frame rate (Hz) — this recording's true rate",
-        min_value=0.1, max_value=1000.0, value=round(default_fps, 3), step=1.0,
-        help="Read from the TIF timestamps. Suite2p's stored fs is often unreliable, "
-             "so double-check this — it changes every recording.")
-    if ops_fs:
-        st.caption(f"ℹ️ Suite2p's stored fs is {float(ops_fs):.3g} Hz (a hint only — verify against the TIF).")
+    default_fps = round(float(ops_fs), 3) if ops_fs else 45.0
+
+    # Keep the rate in session_state so the "Read from raw file" button can set it.
+    # Re-seed the default whenever the selected folder changes.
+    folder_key = str(folder) if folder else ""
+    if st.session_state.get("single_fps_folder") != folder_key:
+        st.session_state["single_fps_folder"] = folder_key
+        st.session_state["single_fps"] = default_fps
+        st.session_state.pop("single_fps_src", None)
+
+    c_fps, c_btn = st.columns([3, 2])
+    with c_fps:
+        fps = st.number_input(
+            "Acquisition frame rate (Hz) — this recording's true rate",
+            min_value=0.1, max_value=1000.0, step=1.0, key="single_fps",
+            help="The recording's true rate. Suite2p's stored fs is unreliable — use "
+                 "'Read from raw file' to get it from the movie's own timestamps.")
+    def _read_rate_cb(rec_folder):
+        # runs as an on_click callback -> before the widget re-instantiates, so
+        # writing the 'single_fps' key here is allowed (unlike inside the run body).
+        rate, src = rate_from_raw(rec_folder)
+        if rate:
+            st.session_state["single_fps"] = round(float(rate), 3)
+            st.session_state["single_fps_src"] = f"✅ read {rate:.2f} Hz from {src}"
+        else:
+            st.session_state["single_fps_src"] = f"ℹ️ {src}"
+
+    with c_btn:
+        st.markdown("<div style='height:1.7rem'></div>", unsafe_allow_html=True)  # align with input
+        st.button("📷 Read from raw file", disabled=not (folder and ok),
+                  use_container_width=True, on_click=_read_rate_cb, args=(folder,))
+
+    src_msg = st.session_state.get("single_fps_src")
+    if src_msg:
+        st.caption(src_msg)
+    elif ops_fs:
+        st.caption(f"ℹ️ Suite2p's stored fs is {float(ops_fs):.3g} Hz "
+                   f"(a hint only — verify against the raw file).")
 
     with st.expander("Advanced"):
         neuropil = st.number_input("Neuropil coefficient", min_value=0.0, max_value=2.0,
@@ -650,11 +696,154 @@ def batch_ui(settings: dict) -> None:
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 
+# ── Compare-recordings flow ────────────────────────────────────────────────
+def compare_ui(settings: dict) -> None:
+    st.subheader("Compare recordings")
+    st.caption("Pool several finished `*_metrics.xlsx` into one comparison workbook — "
+               "per-group means and a two-group contrast (e.g. WT vs KCNT1). "
+               "**You** assign the group labels; genotype isn't read from the files.")
+
+    import sys as _sys
+    if str(REPO_ROOT) not in _sys.path:
+        _sys.path.insert(0, str(REPO_ROOT))
+    try:
+        from pipeline.run_group import build_comparison, _guess_group, _scan_workbooks, GroupError
+    except Exception as exc:
+        st.error(f"Could not load the comparison tool: {exc}")
+        return
+
+    st.session_state.setdefault("cmp_items", [])
+    st.session_state.setdefault("cmp_next_id", 1)
+
+    def add_wb(path: Path) -> bool:
+        if path in {Path(it["path"]) for it in st.session_state["cmp_items"]}:
+            return False
+        cid = st.session_state["cmp_next_id"]
+        st.session_state["cmp_next_id"] += 1
+        st.session_state["cmp_items"].append(
+            {"id": cid, "path": str(path), "group": _guess_group(path)})
+        return True
+
+    with st.container(border=True):
+        st.markdown("**Scan a folder for finished workbooks** (`*_metrics.xlsx`).")
+        c1, c2 = st.columns([4, 1])
+        with c1:
+            parent = st.text_input("Folder", key="cmp_parent",
+                                   label_visibility="collapsed",
+                                   placeholder="/path/to/session")
+        with c2:
+            if st.button("Browse…", key="cmp_browse", use_container_width=True):
+                p = pick_folder_dialog()
+                if p:
+                    st.session_state["cmp_parent"] = p
+                    st.rerun()
+        if st.button("🔍 Scan & add", disabled=not parent):
+            par = normalize_path(parent)
+            if not par or not par.is_dir():
+                st.error("Not a folder.")
+            else:
+                wbs = _scan_workbooks(par)
+                if not wbs:
+                    st.warning("No `*_metrics.xlsx` found under there.")
+                else:
+                    added = sum(1 for w in wbs if add_wb(Path(w)))
+                    st.success(f"Found {len(wbs)} workbook(s); added {added} new.")
+                    st.rerun()
+
+    with st.container(border=True):
+        st.markdown("**Add one workbook**")
+        c1, c2 = st.columns([4, 1])
+        with c1:
+            one = st.text_input("Workbook", key="cmp_one",
+                                label_visibility="collapsed",
+                                placeholder="/path/to/2169_metrics.xlsx")
+        with c2:
+            if st.button("➕ Add", key="cmp_add_one", use_container_width=True, disabled=not one):
+                p = normalize_path(one)
+                if p and p.is_file() and add_wb(p):
+                    st.session_state["cmp_one"] = ""
+                    st.rerun()
+                else:
+                    st.error("Not added — not a file, or already listed.")
+
+    items = st.session_state["cmp_items"]
+    if not items:
+        st.info("Add some `*_metrics.xlsx` workbooks above.")
+        return
+
+    st.markdown(f"**{len(items)} recording(s)**  ·  set a group label per row")
+    hdr = st.columns([4, 2, 0.7])
+    hdr[0].caption("Workbook"); hdr[1].caption("Group"); hdr[2].caption(" ")
+    remove_id = None
+    for it in items:
+        cid = it["id"]
+        p = Path(it["path"])
+        c = st.columns([4, 2, 0.7])
+        with c[0]:
+            st.write(f"`{p.name}`")
+            st.caption(str(p.parent))
+        with c[1]:
+            st.text_input("group", value=it["group"], key=f"cmp_grp_{cid}",
+                          label_visibility="collapsed")
+        with c[2]:
+            if st.button("🗑", key=f"cmp_rm_{cid}", help="Remove"):
+                remove_id = cid
+    if remove_id is not None:
+        st.session_state["cmp_items"] = [x for x in items if x["id"] != remove_id]
+        st.rerun()
+
+    default_out = str(Path(items[0]["path"]).parent / "group_comparison.xlsx")
+    out_path = st.text_input("Save the comparison workbook to",
+                             value=st.session_state.get("cmp_out", default_out), key="cmp_out")
+
+    b = st.columns([1, 1, 3])
+    if b[0].button("Clear list"):
+        st.session_state["cmp_items"] = []
+        st.session_state.pop("cmp_result", None)
+        st.rerun()
+    if b[1].button("▶ Build comparison", type="primary"):
+        built = [{"path": it["path"],
+                  "group": st.session_state.get(f"cmp_grp_{it['id']}", it["group"]),
+                  "label": None} for it in items]
+        try:
+            st.session_state["cmp_result"] = build_comparison(built, out_path)
+        except GroupError as exc:
+            st.error(str(exc))
+            st.session_state.pop("cmp_result", None)
+        except Exception as exc:
+            st.error(f"Failed to build the comparison: {exc}")
+            st.session_state.pop("cmp_result", None)
+
+    res = st.session_state.get("cmp_result")
+    if res and Path(res).exists():
+        st.divider()
+        st.subheader("Comparison")
+        with open(res, "rb") as fh:
+            st.download_button("⬇ Download group_comparison.xlsx", fh,
+                               file_name=Path(res).name, mime=XLSX_MIME)
+        import pandas as pd
+        try:
+            xls = pd.ExcelFile(res)
+        except Exception as exc:
+            st.error(f"Built the file but could not reopen it: {exc}")
+            return
+        for sheet in ["Contrast", "By group", "Per recording"]:
+            if sheet in xls.sheet_names:
+                label = "Per recording (all values)" if sheet == "Per recording" else sheet
+                with st.expander(label, expanded=(sheet == "Contrast")):
+                    show_sheet_html(xls, sheet)
+        if "How to read" in xls.sheet_names:
+            with st.expander("How to read / caveats"):
+                show_sheet_html(xls, "How to read")
+
+
 # ── Mode switch ────────────────────────────────────────────────────────────
-ui_mode = st.radio("Mode", ["Single recording", "Batch queue"],
+ui_mode = st.radio("Mode", ["Single recording", "Batch queue", "Compare recordings"],
                    horizontal=True, label_visibility="collapsed", key="ui_mode")
 st.divider()
 if ui_mode == "Single recording":
     single_recording_ui(settings)
-else:
+elif ui_mode == "Batch queue":
     batch_ui(settings)
+else:
+    compare_ui(settings)
