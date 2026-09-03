@@ -49,6 +49,20 @@ it with our detection settings ([`docs/SUITE2P_SETTINGS.md`](docs/SUITE2P_SETTIN
 CASCADE (`cascade2p`, Rupprecht et al. 2021) is third-party too and is installed, not
 vendored.
 
+For a whole plate, [`tools/batch_suite2p.py`](tools/batch_suite2p.py) runs stage 1 over
+every TIF in a folder with those detection settings already applied, reading each
+recording's true frame rate from its own TIF timestamps. It leaves exactly the
+`<recording>/suite2p/plane0/` layout the GUI's batch queue scans for, so the two halves
+meet in the middle. Run it in your Suite2p environment — `--dry-run` first, always:
+
+```bash
+python tools/batch_suite2p.py "/path/to/folder-of-tifs" --dry-run
+python tools/batch_suite2p.py "/path/to/folder-of-tifs"
+```
+
+It is resumable (finished recordings are skipped) and `--delete-bin` reclaims Suite2p's
+~630 MB-per-recording `data.bin` as it goes.
+
 ---
 
 ## Point-and-click GUI (easiest)
