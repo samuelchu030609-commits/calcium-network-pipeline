@@ -140,7 +140,10 @@ def run_metrics(plane0_dir: str, config) -> str:
     # --- execute all code cells in one namespace, from the plane0 folder ---
     prev_cwd = os.getcwd()
     os.chdir(plane0_dir)
-    ns = {"__name__": "__main__", "display": lambda *a, **k: None}
+    # _TEMPLATE_PATH / _REPO_ROOT let the template stamp fingerprints of the exact code
+    # (pipeline_fixes.py + this template) into the PROVENANCE file, as the parent runner does.
+    ns = {"__name__": "__main__", "display": lambda *a, **k: None,
+          "_TEMPLATE_PATH": _NOTEBOOK, "_REPO_ROOT": _HERE}
     try:
         for i, txt in enumerate(sources):
             try:

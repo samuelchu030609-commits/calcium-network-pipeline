@@ -49,6 +49,23 @@ it with our detection settings ([`docs/SUITE2P_SETTINGS.md`](docs/SUITE2P_SETTIN
 CASCADE (`cascade2p`, Rupprecht et al. 2021) is third-party too and is installed, not
 vendored.
 
+For a whole plate, [`tools/batch_suite2p.py`](tools/batch_suite2p.py) runs stage 1 over
+every TIF in a folder with those detection settings already applied, reading each
+recording's true frame rate from its own TIF timestamps. It leaves exactly the
+`<recording>/suite2p/plane0/` layout the GUI's batch queue scans for, so the two halves
+meet in the middle. Run it in your Suite2p environment — `--dry-run` first, always:
+
+```bash
+python tools/batch_suite2p.py "/path/to/folder-of-tifs" --dry-run
+python tools/batch_suite2p.py "/path/to/folder-of-tifs"
+```
+
+It is resumable (finished recordings are skipped) and `--delete-bin` reclaims Suite2p's
+~630 MB-per-recording `data.bin` as it goes. Long MetaMorph recordings saved in parts
+(`<name>.tif` + `<name>-file002.tif`, written for any stream over ~2 GB) are joined into
+one recording after checking that their timestamps line up; several stage positions of
+the same well become separate recordings (`C02_s1`, `C02_s2`).
+
 ---
 
 ## Point-and-click GUI (easiest)
@@ -131,8 +148,13 @@ combined workbook `RUNID_metrics.xlsx` (friendly "Key Numbers" sheets + technica
 Per-recording `*_metrics.xlsx`:
 - **Per-cell:** event/spike rate, % active, `STTC_to_population` (how coupled each cell is).
 - **Network:** STTC synchrony reported as **z-score vs a circular-shift null** (not raw
-  mean STTC), Pearson (secondary), population coupling, cell assemblies (power-guarded),
-  per-pair functional connectivity (Benjamini–Hochberg FDR), network bursts.
+  mean STTC), with the headline mean over pairs where both cells fired ≥ 5 times and a
+  95% interval from resampling cells; Pearson (secondary), population coupling, cell
+  assemblies (power-guarded), per-pair functional connectivity (Benjamini–Hochberg FDR,
+  with a statement of whether any edge was detectable), network bursts with onset/offset,
+  duration, inter-burst interval, recruitment time and per-cell participation.
+- A plain-language **Key Numbers** sheet comes first; every run also writes a
+  `*_metrics.PROVENANCE.txt` holding fingerprints of the exact code that produced it.
 
 Analysis helpers live in `pipeline/pipeline_fixes.py` — CASCADE readouts (discrete
 spikes / MAD events / continuous rate), drift-corrected ΔF/F₀, STTC, and FDR
@@ -151,6 +173,18 @@ python -m pipeline.run_group --scan /path/to/session --out group_comparison.xlsx
 # or explicit: python -m pipeline.run_group A.xlsx:WT B.xlsx:WT C.xlsx:KCNT1
 ```
 Also available as the **Compare recordings** tab in the [GUI](gui/README.md).
+
+### Plate comparison (one plate, grouped by plate map)
+
+For a whole plate, [`tools/compare_plate.py`](tools/compare_plate.py) puts every well's
+Key Numbers side by side, grouped by well column, with per-group mean/SD, Welch's t-test
+(two-tailed, Bonferroni-adjusted across measures; run only with ≥ 3 wells per group) and
+one dot plot per measure. The well is the unit of replication.
+
+```bash
+python tools/compare_plate.py "/path/to/plate" --group WT=02,03 --group KCNT1=04,05
+```
+It writes `<plate>/<plate>_plate_comparison.xlsx` and a `<plate>_graphs/` folder.
 
 ---
 
@@ -174,6 +208,9 @@ calcium-network-pipeline/
 │   ├── run_metrics.py        ← event + network metrics → xlsx
 │   ├── pipeline_fixes.py     ← shared helpers (baseline, STTC, FDR, CASCADE readouts)
 │   └── config.py             ← reads/validates config.json, routes by indicator
+├── tools/
+│   ├── batch_suite2p.py      ← stage 1 over a folder of TIFs (joins split files)
+│   └── compare_plate.py      ← one workbook comparing every well of a plate
 ├── envs/{cascade,analysis}.yml
 └── docker/{Dockerfile,entrypoint.sh}
 ```

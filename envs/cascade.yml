@@ -10,14 +10,22 @@ channels:
 dependencies:
   - python=3.10
   - numpy=1.26.4          # <2 required by TF 2.15
-  - scipy=1.15.3
+  - scipy=1.15.2          # 1.15.3 is PyPI-only; conda-forge goes 1.15.2 -> 1.16.0
   - h5py=3.16.0
   - ruamel.yaml           # CASCADE reads model config with ruamel.yaml (not pyyaml)
+  - matplotlib-base       # REQUIRED: cascade2p/utils.py imports matplotlib.pyplot at
+                          # module level, so `from cascade2p import cascade` fails
+                          # without it. (seaborn is NOT needed - it is imported inside
+                          # plotting functions this pipeline never calls.)
   - pip
   - pip:
       - tensorflow==2.15.1
-      # CASCADE (cascade2p) is NOT on PyPI. Either install from source:
-      - cascade2p @ git+https://github.com/HelmchenLabSoftware/Cascade
-      # ...or (what the parent project does) git-clone the repo and add it to
-      # PYTHONPATH. The Pretrained_models/ are downloaded separately — bake them
-      # into the image at build time (see docs/DEV.md "Models").
+# CASCADE (cascade2p) is NOT on PyPI and must NOT be pip-installed: upstream's
+# setup.py declares python_requires '>=3.7,<3.8', so `pip install
+# cascade2p @ git+...` hard-fails on the python 3.10 this env pins
+# (ERROR: Package 'cascade2p' requires a different Python).
+# The pipeline never imports it from site-packages anyway — run_cascade.py does
+#     sys.path.insert(0, os.path.expanduser("~/Cascade")); from cascade2p import cascade
+# so CASCADE is a plain git clone at ~/Cascade (Windows: C:\Users\<you>\Cascade):
+#     git clone https://github.com/HelmchenLabSoftware/Cascade ~/Cascade
+# Pretrained_models/ are downloaded separately into that same clone.

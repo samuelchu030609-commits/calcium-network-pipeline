@@ -197,12 +197,35 @@ def benjamini_hochberg(pvals, q=0.05):
 
 
 # ------------------------------------------------------------------ Fix 2
+def fdr_shuffles_needed(n_pairs, q=0.05):
+    """Minimum circular-shift surrogate count for a BH-FDR rejection to be ATTAINABLE.
+
+    An empirical p-value from S surrogates is floored at 1/(S+1). BH at level q rejects
+    the smallest of m p-values only if p_(1) <= q/m. So unless 1/(S+1) <= q/m, NO pair
+    can ever be called significant however strongly it co-fires: the test then reports
+    zero edges by construction rather than by evidence.
+
+    S >= m/q - 1 satisfies it, but at exactly that value 1/(S+1) and q/m are the same
+    real number and the comparison then rests on float rounding. Returns ceil(m/q), one
+    surrogate more, so 1/(S+1) < q/m strictly.
+    """
+    if not n_pairs or not np.isfinite(n_pairs) or n_pairs < 1:
+        return 0
+    return int(np.ceil(float(n_pairs) / float(q)))
+
+
 def fdr_connectivity(event_frames, n_frames, dt_frames, n_shuffles=500, q=0.05, rng=None):
     """Per-pair STTC significance with BH-FDR (replaces the 99th-percentile edge rule).
 
     event_frames : list of per-ACTIVE-cell event FRAME-index arrays.
     Each pair gets a one-sided empirical p from circular-shift surrogates; BH-FDR at
     level q decides edges. `null_edges_expected` = what the old 1% rule would report.
+
+    Besides the graph this returns the power diagnostics that make a zero edge count
+    interpretable: `bh_critical_k1` (= q/m, the p-value a pair must beat to be the first
+    rejection), `min_p` (= 1/(S+1), the smallest p these surrogates can produce),
+    `n_shuffles_needed`, and `fdr_detectable` / `fdr_status`. When min_p exceeds
+    bh_critical_k1 the edge count carries no information -- see fdr_shuffles_needed().
     """
     if rng is None:
         rng = np.random.default_rng(0)
@@ -210,7 +233,9 @@ def fdr_connectivity(event_frames, n_frames, dt_frames, n_shuffles=500, q=0.05, 
     empty = dict(n_edges=0, density=np.nan, mean_degree=np.nan, n_pairs=0,
                  adjacency=np.zeros((m, m), bool), p_values=np.array([]),
                  null_edges_expected=np.nan, min_p=np.nan, n_shuffles=n_shuffles,
-                 degree=np.zeros(m, int))
+                 degree=np.zeros(m, int), bh_critical_k1=np.nan, n_shuffles_needed=0,
+                 fdr_detectable=False,
+                 fdr_status="not computed (fewer than 2 active cells)")
     if m < 2:
         return empty
     iu = np.triu_indices(m, 1)
@@ -233,15 +258,258 @@ def fdr_connectivity(event_frames, n_frames, dt_frames, n_shuffles=500, q=0.05, 
     adj |= adj.T
     degree = adj.sum(1)
     n_edges = int(sig.sum())
+    min_p = 1.0 / (used + 1.0)
+    crit = (q / n_pairs) if n_pairs else np.nan
+    need = fdr_shuffles_needed(n_pairs, q)
+    detectable = bool(n_pairs and min_p <= crit)
+    if not n_pairs:
+        status = "not computed (no finite pairs)"
+    elif detectable:
+        status = (f"adequate: min attainable p {min_p:.2e} <= BH k=1 critical value "
+                  f"{crit:.2e} ({used} surrogates, {n_pairs} pairs)")
+    else:
+        status = (f"UNDERPOWERED: min attainable p {min_p:.2e} > BH k=1 critical value "
+                  f"{crit:.2e}; no pair can reach significance and n_edges is "
+                  f"uninformative. Needs >= {need} surrogates for {n_pairs} pairs.")
     return dict(n_edges=n_edges,
                 density=(n_edges / n_pairs) if n_pairs else np.nan,
                 mean_degree=float(degree.mean()) if m else np.nan,
                 n_pairs=n_pairs, adjacency=adj, p_values=p, degree=degree,
-                null_edges_expected=0.01 * n_pairs, min_p=1.0 / (used + 1.0),
-                n_shuffles=used)
+                null_edges_expected=0.01 * n_pairs, min_p=min_p,
+                n_shuffles=used, bh_critical_k1=crit, n_shuffles_needed=need,
+                fdr_detectable=detectable, fdr_status=status)
 
 
 # ------------------------------------------------------------------ item D
+def sttc_pair_mask(event_counts, min_events):
+    """Boolean (m, m) mask: True where BOTH cells of the pair fired >= min_events events.
+
+    WHY GATE. STTC was constructed so its EXPECTATION is not confounded by firing rate
+    (Cutts & Eglen 2014) -- but rate-robustness of the expectation is not low sampling
+    VARIANCE. The statistic is built from the tiling proportion P = (fraction of one
+    cell's events that fall inside the other's +/-dt tiles). With one or two events that
+    proportion can only take the values 0, 1/2, 1, so STTC collapses onto near-extreme
+    values whatever the true coupling: a single event landing inside a tile returns
+    STTC ~ +1, and one landing outside returns a small negative number set by the tiling
+    fractions alone. Averaging such pairs in with well-sampled ones does not average out
+    -- it adds a large, rate-dependent variance term to the network mean and drags the
+    median toward the negative no-overlap value.
+
+    Gating is therefore variance control, not bias correction, and it is not optional
+    for a mean over pairs: report the gated mean as the network synchrony estimate and
+    the ungated mean alongside it for comparability. Diagonal is False.
+    """
+    c = np.asarray(event_counts)
+    ok = np.isfinite(c) & (c >= float(min_events))
+    mask = np.outer(ok, ok)
+    np.fill_diagonal(mask, False)
+    return mask
+
+
+def network_burst_intervals(coactive_fraction, peak_frames, threshold, fps,
+                            coactivity_window_sec=0.0, time_sec=None):
+    """Extend detected network-burst PEAKS into burst EPOCHS (onset / offset / duration).
+
+    A network burst is the contiguous run of frames containing a significant peak over
+    which the co-active fraction stays >= `threshold` -- the epoch during which
+    population co-activity is elevated, not the single instant it peaks. Peaks whose
+    runs coincide are reported once, at the run's own maximum.
+
+    DURATION CAVEAT. `coactive_fraction` is built by convolving each event with a boxcar
+    of width `coactivity_window_sec`, which broadens an instantaneous population event
+    to at least that width. `duration_sec` is the raw supra-threshold extent;
+    `duration_corrected_sec` subtracts the window width, floored at one frame. Report
+    the corrected value as the network-burst duration (NBD); the raw value is kept so
+    the correction stays auditable.
+
+    Inter-burst intervals (NIBI) are measured onset-to-onset, so n_bursts bursts yield
+    n_bursts - 1 intervals -- the quantity that limits whether a CV of NIBI means
+    anything on a short recording.
+    """
+    cf = np.asarray(coactive_fraction, float)
+    n = cf.size
+    keys = ("onset_frame", "peak_frame", "offset_frame", "onset_sec", "peak_sec",
+            "offset_sec", "duration_sec", "duration_corrected_sec", "peak_fraction")
+    if n == 0 or len(np.atleast_1d(peak_frames)) == 0 or not np.isfinite(threshold):
+        out = {k: np.array([]) for k in keys}
+        out["inter_burst_interval_sec"] = np.array([])
+        return out
+    above = cf >= float(threshold)
+    runs = []
+    for p in np.asarray(peak_frames, int).ravel():
+        if not (0 <= p < n) or not above[p]:
+            continue                  # peak sits below the extent threshold: no epoch
+        a = p
+        while a > 0 and above[a - 1]:
+            a -= 1
+        b = p
+        while b < n - 1 and above[b + 1]:
+            b += 1
+        runs.append((int(a), int(b)))
+    runs = sorted(set(runs))
+    if not runs:
+        out = {k: np.array([]) for k in keys}
+        out["inter_burst_interval_sec"] = np.array([])
+        return out
+    onset = np.array([a for a, _ in runs], int)
+    offset = np.array([b for _, b in runs], int)
+    peak = np.array([a + int(np.argmax(cf[a:b + 1])) for a, b in runs], int)
+    dur = (offset - onset + 1) / float(fps)
+    corr = np.maximum(1.0 / float(fps), dur - float(coactivity_window_sec))
+    if time_sec is not None:
+        t = np.asarray(time_sec, float)
+        onset_sec, peak_sec, offset_sec = t[onset], t[peak], t[offset]
+    else:
+        onset_sec = onset / float(fps)
+        peak_sec = peak / float(fps)
+        offset_sec = offset / float(fps)
+    ibi = np.diff(onset_sec) if len(onset_sec) > 1 else np.array([])
+    return dict(onset_frame=onset, peak_frame=peak, offset_frame=offset,
+                onset_sec=onset_sec, peak_sec=peak_sec, offset_sec=offset_sec,
+                duration_sec=dur, duration_corrected_sec=corr,
+                peak_fraction=cf[peak], inter_burst_interval_sec=ibi)
+
+
+def burst_recruitment(event_frames, onset_frames, offset_frames, fps, frac=0.8):
+    """Per network burst: which cells took part, and how fast the population locked.
+
+    For each burst epoch [onset, offset] this returns the participating cells (>= 1 event
+    inside the epoch), each participant's FIRST-event latency measured from burst onset,
+    and the latency by which `frac` of the participants have fired -- t80 at the default.
+
+    WHY RECRUITMENT TIME AND NOT JUST DURATION. Burst duration measures how long elevated
+    co-activity lasted; recruitment time measures how tightly the population locked to the
+    burst onset. The two dissociate -- a network can burst rarely but lock tightly, or
+    often but loosely -- and they are different phenotypes. Recruitment is also the
+    quantity an excitability channelopathy is most likely to move, because it is set by
+    how fast activity spreads once a burst starts rather than by how often one starts.
+
+    RESOLUTION LIMIT. Latencies are quantised to the EVENT timebase (1/fps), and for a
+    resampled CASCADE train that timebase is finer than the acquisition frame interval.
+    The population curve and its t_frac are real measurements; the ORDER of individual
+    cells within one ACQUISITION frame is not resolved and must not be read off this
+    output. Compare t_frac against the acquisition interval before interpreting it.
+
+    Bursts with no participant return NaN latencies rather than 0, so that "no burst"
+    never enters a mean as "instantaneous recruitment".
+    """
+    onset = np.asarray(onset_frames, int).ravel()
+    offset = np.asarray(offset_frames, int).ravel()
+    nb = onset.size
+    out = dict(n_participants=np.zeros(nb, int),
+               recruitment_sec=np.full(nb, np.nan),
+               median_latency_sec=np.full(nb, np.nan),
+               mean_latency_sec=np.full(nb, np.nan),
+               participants=[], latencies_sec=[])
+    if nb == 0:
+        return out
+    f = float(frac)
+    for b in range(nb):
+        a, z = int(onset[b]), int(offset[b])
+        part, lat = [], []
+        for i, fr in enumerate(event_frames):
+            e = np.asarray(fr, int).ravel()
+            inb = e[(e >= a) & (e <= z)]
+            if inb.size:
+                part.append(i)
+                lat.append((inb.min() - a) / float(fps))
+        out["participants"].append(np.asarray(part, int))
+        lat = np.sort(np.asarray(lat, float))
+        out["latencies_sec"].append(lat)
+        out["n_participants"][b] = lat.size
+        if lat.size:
+            # index of the smallest latency by which >= frac of participants have fired
+            k = int(np.ceil(f * lat.size)) - 1
+            out["recruitment_sec"][b] = lat[max(0, min(k, lat.size - 1))]
+            out["median_latency_sec"][b] = float(np.median(lat))
+            out["mean_latency_sec"][b] = float(lat.mean())
+    return out
+
+
+def per_cell_burst_participation(event_frames, onset_frames, offset_frames):
+    """Per cell: how many burst epochs it joined, and its in/out-of-burst event split.
+
+    WHY THIS IS REPORTED PER CELL. A population synchrony average cannot distinguish a
+    cell that is highly ACTIVE from a cell that is highly SYNCHRONISED. Both raise a mean
+    event rate; only the second belongs in a synchrony claim. A well can contain its
+    busiest neuron firing entirely outside every network burst, and averaging that cell
+    into a population synchrony value measures the wrong thing. The two counts below
+    separate them, and `participation_fraction` is the per-cell quantity that a genotype
+    contrast should be run on once there are enough bursts for it to be graded rather
+    than binary (it takes only n_bursts+1 distinct values).
+    """
+    onset = np.asarray(onset_frames, int).ravel()
+    offset = np.asarray(offset_frames, int).ravel()
+    n_cells = len(event_frames)
+    nb = onset.size
+    joined = np.zeros(n_cells, int)
+    n_in = np.zeros(n_cells, int)
+    n_tot = np.zeros(n_cells, int)
+    for i, fr in enumerate(event_frames):
+        e = np.asarray(fr, int).ravel()
+        n_tot[i] = e.size
+        for b in range(nb):
+            k = int(((e >= onset[b]) & (e <= offset[b])).sum())
+            if k:
+                joined[i] += 1
+                n_in[i] += k
+    frac = joined / float(nb) if nb else np.full(n_cells, np.nan)
+    return dict(n_bursts_joined=joined,
+                participation_fraction=frac,
+                n_events_in_bursts=n_in,
+                n_events_outside_bursts=n_tot - n_in,
+                n_bursts=int(nb))
+
+
+def bootstrap_pairwise_ci(matrix, mask=None, n_boot=2000, ci=95.0, rng=None):
+    """Percentile bootstrap CI for the mean of a pairwise matrix, RESAMPLING CELLS.
+
+    WHY CELLS AND NOT PAIRS. m cells yield m(m-1)/2 pairs, but only m independent
+    sampling units: every pair shares a cell with 2(m-2) others, so a bootstrap that
+    resamples PAIRS treats dependent observations as independent and returns an interval
+    far too narrow -- by roughly sqrt(m/2) at these m. Resampling cells and rebuilding the
+    pair set from the drawn cells propagates the real sampling unit. This is the reason a
+    mean pairwise synchrony computed from ~20 gated cells carries a much wider interval
+    than its ~150 pairs suggest, and reporting it without one overstates the precision.
+
+    Self-pairs created when the same cell is drawn twice are excluded: their STTC is
+    identically 1 and would inflate every replicate. `mask` (if given) is the same fixed
+    pair mask used for the point estimate -- e.g. the event-count gate -- so the interval
+    describes the quantity actually reported, not a different pair set.
+
+    Returns lo, hi, sd and the number of usable replicates. An interval from fewer than
+    ~200 usable replicates, or from fewer than 3 cells, is returned as NaN rather than a
+    misleadingly tight number.
+    """
+    M = np.asarray(matrix, float)
+    if M.ndim != 2 or M.shape[0] != M.shape[1]:
+        raise ValueError("matrix must be square (m, m)")
+    m = M.shape[0]
+    nan3 = (np.nan, np.nan, np.nan, 0)
+    if m < 3:
+        return nan3
+    valid = np.isfinite(M)
+    if mask is not None:
+        valid &= np.asarray(mask, bool)
+    np.fill_diagonal(valid, False)
+    if not valid.any():
+        return nan3
+    g = rng if rng is not None else np.random.default_rng(0)
+    reps = np.full(int(n_boot), np.nan)
+    for b in range(int(n_boot)):
+        idx = g.integers(0, m, m)
+        sub = M[np.ix_(idx, idx)]
+        ok = valid[np.ix_(idx, idx)] & (idx[:, None] != idx[None, :])
+        if ok.any():
+            reps[b] = sub[ok].mean()
+    good = reps[np.isfinite(reps)]
+    if good.size < 200:
+        return (np.nan, np.nan, np.nan, int(good.size))
+    a = (100.0 - float(ci)) / 2.0
+    lo, hi = np.percentile(good, [a, 100.0 - a])
+    return (float(lo), float(hi), float(good.std(ddof=1)), int(good.size))
+
+
 def assembly_power_ok(n_active, n_bins, min_bins=50, max_ratio=0.2):
     """True only if there are enough time-bins for Marchenko-Pastur to be meaningful:
     T >= min_bins AND N/T <= max_ratio. Otherwise assembly detection should be skipped."""
