@@ -61,7 +61,8 @@ case "$BASE" in *" "*) die "The install folder path contains a space ($BASE). Se
 FREE_GB=$(df -g "$HOME" | awk 'NR==2{print $4}')
 [ "$FREE_GB" -ge 15 ] || die "Only ${FREE_GB} GB free on this disk; the install needs about 15 GB."
 ok "${FREE_GB} GB free"
-curl -fsS --max-time 20 -o /dev/null https://conda.anaconda.org \
+# Any HTTP answer (even an error page) proves the network path works.
+curl -sS --max-time 20 -o /dev/null https://conda.anaconda.org/conda-forge/ \
   || die "Cannot reach the internet (conda.anaconda.org). Check the network connection, then run this again."
 ok "internet connection works"
 

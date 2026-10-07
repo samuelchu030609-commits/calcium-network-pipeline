@@ -84,12 +84,19 @@ $drive = (Get-Item $Base).PSDrive
 $freeGB = [math]::Floor($drive.Free / 1GB)
 if ($freeGB -lt 15) { Die "Only $freeGB GB free on drive $($drive.Name):, the install needs about 15 GB." }
 Ok "$freeGB GB free on drive $($drive.Name):"
+# Any answer from the server - even an HTTP error page - proves the network path works;
+# only "no response at all" means offline or blocked.
+$online = $false
 try {
-    Invoke-WebRequest -UseBasicParsing -Uri 'https://conda.anaconda.org' -Method Head -TimeoutSec 30 -ErrorAction Stop | Out-Null
-    Ok 'internet connection works'
+    Invoke-WebRequest -UseBasicParsing -Uri 'https://conda.anaconda.org/conda-forge/' -TimeoutSec 30 -ErrorAction Stop | Out-Null
+    $online = $true
 } catch {
+    if ($_.Exception.Response) { $online = $true }
+}
+if (-not $online) {
     Die 'Cannot reach the internet (conda.anaconda.org). Check the network, or ask IT whether conda.anaconda.org, pypi.org, files.pythonhosted.org and github.com are blocked.'
 }
+Ok 'internet connection works'
 $lp = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem' -ErrorAction SilentlyContinue).LongPathsEnabled
 if ($lp -ne 1 -and $Base.Length -gt 20) {
     Note "Windows long paths are off and the install folder ($Base) is long. If installing TensorFlow fails with 'No such file or directory', ask IT to enable long paths or to allow C:\CalciumPipeline."
