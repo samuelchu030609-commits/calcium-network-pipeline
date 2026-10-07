@@ -233,7 +233,7 @@ def installed_python(name: str) -> Path:
 
 # ── Command construction ───────────────────────────────────────────────────
 def build_command(settings: dict, data_dir: Path) -> tuple[list[str], dict, str | None, str]:
-    """Return (argv, env, cwd, human_readable). Mirrors run.sh / run_pipeline."""
+    """Return (argv, env, cwd, human_readable). Mirrors docker/run.sh / run_pipeline."""
     env = os.environ.copy()
     mode = settings.get("mode", "conda")
 

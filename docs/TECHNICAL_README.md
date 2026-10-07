@@ -81,20 +81,17 @@ and the `.xlsx`. It also has a **batch** mode (queue many recordings) and a
 `./gui/run_gui.sh` (macOS/Linux) or `gui\run_gui.bat` (Windows). See
 [`gui/README.md`](../gui/README.md).
 
-## Two ways to run stages 2–3
+## Ways to run it
 
-### A. Docker (for non-coders / Windows) — *image pending*
-One command, nothing to install but Docker Desktop:
-```
-./run.sh /path/to/recording          # macOS / Linux
-run.bat  C:\path\to\recording         # Windows
-```
-It reads a `config.json` in the recording folder (copy
-[`config.example.json`](../config.example.json)) and writes `*_metrics.xlsx` into
-`suite2p/plane0/`. See [`docs/INSTALL.md`](INSTALL.md).
-*(The image bundles both conda envs and the CASCADE models, so the first run needs no internet — see Status.)*
+### A. One-click install + GUI (recommended; all three stages)
+See [HOW_TO_INSTALL.md](../HOW_TO_INSTALL.md). The GUI's *From microscope files* mode runs
+[`tools/analyze_folder.py`](../tools/analyze_folder.py) — stage 1 → 2 → 3 over a folder of
+TIFs, each stage in its own pinned environment.
 
-### B. Manual (for developers) — the working path today
+### B. Docker (stages 2–3 only) — *image not published*
+See [`docker/README.md`](../docker/README.md). You must build the image yourself.
+
+### C. Manual (for developers)
 Run the two stages directly in their conda envs.
 
 **Stage 2 — CASCADE (GCaMP only):** converts fluorescence to a *calibrated* spike
@@ -200,12 +197,12 @@ calcium-network-pipeline/
 ├── INSTALL_WINDOWS.bat / INSTALL_MAC.sh  ← one-click installers (code in install/)
 ├── docs/TECHNICAL_README.md  ← this file
 ├── LICENSE                   ← MIT
-├── run.sh / run.bat          ← end-user Docker wrappers
 ├── config.example.json       ← per-recording indicator / frame-rate / route template
+├── install/                  ← installer scripts + self_test.py
+├── gui/                      ← the point-and-click program (Streamlit)
 ├── docs/
-│   ├── INSTALL.md            ← install Docker (Windows + Mac)
 │   ├── SUITE2P_SETTINGS.md   ← how to run Suite2p to match our detection
-│   ├── TROUBLESHOOTING.md
+│   ├── TROUBLESHOOTING.md    ← for the Suite2p-output and Docker routes
 │   └── DEV.md                ← sync boundary + how to fill in the code
 ├── settings/pipeline_settings.npy  ← load-this-instead backup of Suite2p settings
 ├── pipeline/                 ← analysis code (stages 2–3)
@@ -215,10 +212,12 @@ calcium-network-pipeline/
 │   ├── pipeline_fixes.py     ← shared helpers (baseline, STTC, FDR, CASCADE readouts)
 │   └── config.py             ← reads/validates config.json, routes by indicator
 ├── tools/
+│   ├── analyze_folder.py     ← stages 1→2→3 over a folder of TIFs (what the GUI runs)
 │   ├── batch_suite2p.py      ← stage 1 over a folder of TIFs (joins split files)
 │   └── compare_plate.py      ← one workbook comparing every well of a plate
-├── envs/{cascade,analysis}.yml
-└── docker/{Dockerfile,entrypoint.sh}
+├── tests/, examples/         ← unit tests; synthetic acceptance test
+├── envs/{cascade,analysis,gui}.yml  ← for Docker / manual setups (installers pin their own)
+└── docker/                   ← Dockerfile, run.sh / run.bat wrappers, README (build it yourself)
 ```
 
 ## Requirements

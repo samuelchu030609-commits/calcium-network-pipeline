@@ -20,4 +20,4 @@ specific. Confirm `native_fps` in `config.json` is the true rate from the TIF
 timestamps.
 
 **Windows path with spaces fails** — wrap the path in quotes:
-`run.bat "C:\My Data\recording 3"`.
+`docker\run.bat "C:\My Data\recording 3"`.

@@ -19,7 +19,8 @@ context lives in the parent project's `CLAUDE.md`, not here.
 - `install/` — `install_windows.ps1` (must stay ASCII: PowerShell 5.1), `install_mac.sh`,
   `self_test.py`. Version pins live in BOTH installers AND `self_test.py` EXPECTED — change
   all three together. They equal the parent project's verified envs.
-- `docker/` (Dockerfile + `bake_models.py`), `envs/` (Docker/manual only — NOT used by the
+- `docker/` (Dockerfile, `bake_models.py`, `run.sh`/`run.bat`, README — the image is NOT
+  published; users must build it), `envs/` (Docker/manual only — NOT used by the
   installers), `settings/pipeline_settings.npy`, `examples/`, `docs/` (`TECHNICAL_README.md`
   = the old long README).
 

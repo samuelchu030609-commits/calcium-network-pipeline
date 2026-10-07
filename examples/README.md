@@ -15,7 +15,8 @@ my_recording_2169/
         └── ...           ← everything Suite2p wrote
 ```
 
-Then:  `./run.sh my_recording_2169`  (or `run.bat my_recording_2169` on Windows).
+Then, in the `analysis` environment:  `python -m pipeline.run_pipeline my_recording_2169`
+(set `PIPELINE_CASCADE_PYTHON` to the `cascade` environment's python, as the GUI does).
 
 Output `..._metrics.xlsx` is written into `suite2p/plane0/`.
 
@@ -33,7 +34,7 @@ full chain (CASCADE model → dF/F0 → events → STTC → network bursts).
 
     # or by hand:
     python examples/make_example.py examples/_synthetic
-    ./run.sh examples/_synthetic
+    python -m pipeline.run_pipeline examples/_synthetic
 
 The test asserts CASCADE ran against the baked model, the metrics/PROVENANCE/QC
 outputs were written, the detection-settings guard reported a match, and the

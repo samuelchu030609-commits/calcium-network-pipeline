@@ -39,8 +39,8 @@ programming or GitHub knowledge needed. In short:
   the stages fit together
 - [docs/SUITE2P_SETTINGS.md](docs/SUITE2P_SETTINGS.md): the locked cell-detection settings
 - [gui/README.md](gui/README.md): the point-and-click program
-- [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) and the troubleshooting table in
-  [HOW_TO_INSTALL.md](HOW_TO_INSTALL.md#troubleshooting)
+- Troubleshooting: the table in [HOW_TO_INSTALL.md](HOW_TO_INSTALL.md#troubleshooting);
+  for the Suite2p-output and Docker routes, [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)
 
 ## Citing the methods
 
