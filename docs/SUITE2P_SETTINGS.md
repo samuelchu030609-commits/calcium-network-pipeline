@@ -65,7 +65,7 @@ or have measured it, use that.
 
 Set the data path to your TIF folder, Run. When it finishes you'll have a
 `suite2p/plane0/` folder. Point this pipeline at the folder that contains
-`suite2p/` (see the main [README](../README.md)).
+`suite2p/` (see the [technical README](TECHNICAL_README.md)).
 
 ## 5. Sanity check before moving on
 

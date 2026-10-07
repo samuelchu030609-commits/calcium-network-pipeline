@@ -1,20 +1,28 @@
-# Stages 2–3 GUI
+# The GUI
 
-A small point-and-click front-end for the two stages this pipeline owns —
-**CASCADE spike inference** and **network/synchrony metrics**. It saves you from
-editing `config.json` by hand and from running the pipeline on the command line.
+A small point-and-click front-end that runs in your web browser, entirely on your own
+computer. It has four modes:
 
-It does **not** run Suite2p. Do stage 1 (Suite2p segmentation) yourself first,
-exactly as the top-level [README](../README.md) and
-[docs/SUITE2P_SETTINGS.md](../docs/SUITE2P_SETTINGS.md) describe. This GUI then
-takes that Suite2p output folder and finishes the job.
+- **From microscope files** — all three stages, starting from a folder of `.tif`
+  movies: Suite2p → CASCADE → metrics. It runs `tools/analyze_folder.py` in the
+  background, so closing the browser does not stop it, and it collects every workbook
+  in `<folder>/RESULTS/`. This mode needs the one-click install
+  ([HOW_TO_INSTALL.md](../HOW_TO_INSTALL.md)) and must be opened from its
+  **Calcium Pipeline** Desktop launcher.
+- **One Suite2p recording** / **Batch of Suite2p recordings** — stages 2–3 only, for
+  folders that already contain Suite2p output (described below).
+- **Compare recordings** — pools finished workbooks into a group comparison.
+
+For the two Suite2p modes, run stage 1 (Suite2p segmentation) yourself first, exactly
+as the [technical README](../docs/TECHNICAL_README.md) and
+[docs/SUITE2P_SETTINGS.md](../docs/SUITE2P_SETTINGS.md) describe:
 
 ```
   YOU (stage 1)                    THIS GUI (stages 2–3)
   Suite2p GUI  ──▶ suite2p/plane0/  ──▶  CASCADE ──▶ metrics ──▶ *_metrics.xlsx
 ```
 
-## What it does
+## The Suite2p modes: what they do
 
 1. **Pick the recording folder** — the folder that contains `suite2p/`.
 2. **Describe the recording** — choose the indicator from a dropdown (the
@@ -29,17 +37,16 @@ Everything runs **locally**. No files are uploaded anywhere — the GUI reads yo
 data straight from disk, which is why it works on large recordings and on a
 shared lab machine.
 
-## Three modes
+## The modes in more detail
 
-At the top, switch between **Single recording**, **Batch queue**, and
-**Compare recordings**.
+At the top, switch between the modes.
 
-- **Single recording** — the one-at-a-time flow described above. The frame-rate
+- **One Suite2p recording** — the one-at-a-time flow described above. The frame-rate
   field has a **📷 Read from raw file** button that reads the *true* rate from the
   raw movie's own timestamps (Suite2p's stored `fs` is unreliable). It works on
   MetaSeries/MetaMorph TIFs today; for ND2 it tells you to install the `nd2`
   package. It only fills the suggestion — you still see and confirm the number.
-- **Batch queue** — process several recordings back-to-back. Build the queue two
+- **Batch of Suite2p recordings** — process several recordings back-to-back. Build the queue two
   ways:
   - **Scan a parent folder** — point it at a folder (e.g. a day's imaging session)
     and it finds every recording (any `suite2p/plane0`) beneath it and adds them
@@ -61,6 +68,10 @@ At the top, switch between **Single recording**, **Batch queue**, and
   Also available on the command line: `python -m pipeline.run_group --scan PARENT`.
 
 ## First-time setup
+
+*With the one-click install ([HOW_TO_INSTALL.md](../HOW_TO_INSTALL.md)) skip this section
+and the next two: the installer builds everything and the Desktop launcher starts the GUI
+already knowing where each environment is.*
 
 The GUI needs `streamlit`. The pipeline itself still runs in the conda envs the
 main README sets up (`analysis` + `cascade`, or the Docker image). Two options:

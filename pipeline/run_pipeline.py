@@ -33,8 +33,16 @@ def _run_cascade_stage(plane0: str, family: str, fps: float) -> None:
         runs where TF actually is. Without this, a direct import would ImportError
         inside the container.
     """
+    cascade_py = os.environ.get("PIPELINE_CASCADE_PYTHON")
     cascade_env = os.environ.get("PIPELINE_CASCADE_ENV")
-    if cascade_env:
+    if cascade_py:
+        # The one-click install (install/) knows the cascade env's interpreter by
+        # path, so no `conda` needs to be on PATH (it usually isn't on Windows).
+        cmd = [cascade_py, "-m", "pipeline.run_cascade", plane0,
+               "--family", str(family), "--fps", str(fps)]
+        print(f"[pipeline] stage 2: running CASCADE with {cascade_py}")
+        subprocess.run(cmd, check=True)
+    elif cascade_env:
         cmd = ["conda", "run", "--no-capture-output", "-n", cascade_env,
                "python", "-m", "pipeline.run_cascade", plane0,
                "--family", str(family), "--fps", str(fps)]

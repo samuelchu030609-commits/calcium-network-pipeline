@@ -1,15 +1,16 @@
-"""Calcium Network Pipeline — stages 2–3 GUI.
+"""Calcium Network Pipeline — GUI.
 
-A thin Streamlit front-end over pipeline/run_pipeline.py. It does NOT re-implement
-any analysis: it collects the same three things config.json needs (indicator,
-frame rate, route), writes config.json for you, runs the existing orchestrator,
-streams its log, and shows the friendly "Key Numbers" from the output workbook.
+A thin Streamlit front-end. It does NOT re-implement any analysis:
 
-Stage 1 (Suite2p segmentation) is done by the user beforehand, exactly as the
-README describes. This GUI covers stage 2 (CASCADE) + stage 3 (metrics) only.
+  * "From microscope files" runs tools/analyze_folder.py (all three stages over a
+    folder of TIFs) as a background process and shows its progress.
+  * The other modes start from existing Suite2p output: they collect what
+    config.json needs (indicator, frame rate, route), write it, run
+    pipeline/run_pipeline.py, stream its log, and show the friendly "Key Numbers".
 
-Launch it with gui/run_gui.sh (macOS/Linux) or gui/run_gui.bat (Windows), which
-is just `python -m streamlit run gui/app.py`.
+With the one-click install (install/), the "Calcium Pipeline" Desktop launcher
+starts this with CNP_CONDA_BASE set, and every stage runs in its own environment
+of that install. Otherwise launch it with gui/run_gui.sh or gui/run_gui.bat.
 """
 from __future__ import annotations
 
@@ -17,6 +18,7 @@ import json
 import os
 import shutil
 import subprocess
+import time
 from pathlib import Path
 
 import streamlit as st
@@ -186,19 +188,47 @@ def read_ops_hint(plane0: Path) -> dict:
         return {}
 
 
-def pick_folder_dialog() -> str | None:
-    """Native OS folder picker (works when the GUI runs on the same machine)."""
+_PICKER = r"""
+import sys, tkinter as tk
+from tkinter import filedialog
+root = tk.Tk()
+root.withdraw()
+root.attributes("-topmost", True)
+path = filedialog.askdirectory(title=sys.argv[1])
+root.destroy()
+sys.stdout.write(path or "")
+"""
+
+
+def pick_folder_dialog(title: str = "Select a folder") -> str | None:
+    """Native OS folder picker (works when the GUI runs on the same machine).
+
+    Runs in its own small process: Streamlit executes this script on a worker
+    thread, and macOS only allows windows on a program's main thread (an in-process
+    Tk dialog hangs there).
+    """
     try:
-        import tkinter as tk
-        from tkinter import filedialog
-        root = tk.Tk()
-        root.withdraw()
-        root.attributes("-topmost", True)
-        path = filedialog.askdirectory(title="Select the recording folder (contains suite2p/)")
-        root.destroy()
-        return path or None
+        r = subprocess.run([_sys.executable, "-c", _PICKER, title],
+                           capture_output=True, text=True, timeout=600)
+        return r.stdout.strip() or None
     except Exception:
         return None
+
+
+# ── The one-click install ──────────────────────────────────────────────────
+def installed_base() -> Path | None:
+    """The install's conda folder when launched from the Desktop launcher, else None."""
+    raw = os.environ.get("CNP_CONDA_BASE")
+    if raw and (Path(raw) / "envs").is_dir():
+        return Path(raw)
+    return None
+
+
+def installed_python(name: str) -> Path:
+    base = installed_base()
+    if os.name == "nt":
+        return base / "envs" / name / "python.exe"
+    return base / "envs" / name / "bin" / "python"
 
 
 # ── Command construction ───────────────────────────────────────────────────
@@ -206,6 +236,13 @@ def build_command(settings: dict, data_dir: Path) -> tuple[list[str], dict, str 
     """Return (argv, env, cwd, human_readable). Mirrors run.sh / run_pipeline."""
     env = os.environ.copy()
     mode = settings.get("mode", "conda")
+
+    if mode == "installed":
+        env["PIPELINE_CASCADE_PYTHON"] = str(installed_python("cascade"))
+        env.pop("PIPELINE_CASCADE_ENV", None)
+        env["PYTHONUTF8"] = "1"
+        argv = [str(installed_python("analysis")), "-m", "pipeline.run_pipeline", str(data_dir)]
+        return argv, env, str(REPO_ROOT), " ".join(argv)
 
     if mode == "docker":
         image = settings.get("image", "ghcr.io/samuelchu030609-commits/calcium-network-pipeline:latest")
@@ -331,71 +368,352 @@ def run_one_recording(folder: Path, config_dict: dict, settings: dict, log_box) 
     return {"rc": rc, "xlsx": xlsx, "warned": warned, "lines": lines}
 
 
+# ── From-microscope-files flow (all three stages, runs in the background) ────
+# INDICATORS index -> tools/analyze_folder.py --indicator value
+ANALYZE_KEYS = ["jgcamp8s", "jgcamp8f", "fluo4"]
+RUN_STATE = "_gui_run.json"     # in <folder>/RESULTS/: which process is analysing it
+RUN_LOG = "_gui_live_log.txt"   # in <folder>/RESULTS/: that process's screen output
+
+
+def run_alive(state: dict | None) -> bool:
+    """Is the analysis recorded in `state` still running?
+
+    Checks that the process is really OUR analysis, not an unrelated program that
+    was given the same process number after a restart (Stop must never kill that).
+    """
+    if not state or not state.get("pid"):
+        return False
+    pid = int(state["pid"])
+    if os.name == "nt":
+        # os.kill(pid, 0) would KILL the process on Windows, so ask the OS directly.
+        import ctypes
+        from ctypes import wintypes
+        k32 = ctypes.windll.kernel32
+        h = k32.OpenProcess(0x1000, False, pid)        # PROCESS_QUERY_LIMITED_INFORMATION
+        if not h:
+            return False
+        try:
+            code = wintypes.DWORD()
+            k32.GetExitCodeProcess(h, ctypes.byref(code))
+            if code.value != 259:                      # STILL_ACTIVE
+                return False
+            # Same process = created when we started it (FILETIME: 100 ns since 1601).
+            c, e, k, u = (wintypes.FILETIME() for _ in range(4))
+            k32.GetProcessTimes(h, ctypes.byref(c), ctypes.byref(e), ctypes.byref(k), ctypes.byref(u))
+            created = ((c.dwHighDateTime << 32) + c.dwLowDateTime) / 1e7 - 11644473600
+            return abs(created - float(state.get("t0", 0))) < 60
+        finally:
+            k32.CloseHandle(h)
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    try:   # a finished child of this GUI lingers as a zombie until reaped
+        done, _ = os.waitpid(pid, os.WNOHANG)
+        if done != 0:
+            return False
+    except ChildProcessError:
+        pass
+    r = subprocess.run(["ps", "-p", str(pid), "-o", "command="], capture_output=True, text=True)
+    return "analyze_folder.py" in r.stdout
+
+
+def run_state(folder: Path) -> dict | None:
+    p = folder / "RESULTS" / RUN_STATE
+    try:
+        return json.loads(p.read_text())
+    except Exception:
+        return None
+
+
+def analyze_argv(folder: Path, ind_idx: int, *, dry_run=False, force=False,
+                 delete_bin=False, fps=None) -> list[str]:
+    argv = [str(installed_python("analysis")), str(REPO_ROOT / "tools" / "analyze_folder.py"),
+            str(folder), "--indicator", ANALYZE_KEYS[ind_idx]]
+    if dry_run:
+        argv.append("--dry-run")
+    if force:
+        argv.append("--force")
+    if delete_bin:
+        argv.append("--delete-bin")
+    if fps:
+        argv += ["--fps", str(fps)]
+    return argv
+
+
+def start_background(folder: Path, argv: list[str]) -> None:
+    """Start the analysis so that it outlives the browser tab AND this GUI's window."""
+    results = folder / "RESULTS"
+    results.mkdir(exist_ok=True)
+    log = open(results / RUN_LOG, "w", encoding="utf-8")
+    env = os.environ.copy()
+    env["PYTHONUTF8"] = "1"
+    env["PYTHONIOENCODING"] = "utf-8"
+    kw = {}
+    if os.name == "nt":
+        kw["creationflags"] = 0x00000200 | 0x08000000   # NEW_PROCESS_GROUP | NO_WINDOW
+    else:
+        kw["start_new_session"] = True
+    proc = subprocess.Popen(argv, stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+                            cwd=str(REPO_ROOT), env=env, **kw)
+    (results / RUN_STATE).write_text(json.dumps(
+        {"pid": proc.pid, "argv": argv, "t0": time.time(),
+         "started": time.strftime("%Y-%m-%d %H:%M")}))
+
+
+def stop_background(pid: int) -> None:
+    """Stop the analysis and everything it started (Suite2p, CASCADE ...)."""
+    try:
+        if os.name == "nt":
+            subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True)
+        else:
+            import signal
+            os.killpg(pid, signal.SIGTERM)
+    except Exception:
+        pass
+
+
+def open_in_file_browser(path: Path) -> None:
+    try:
+        if os.name == "nt":
+            os.startfile(str(path))  # type: ignore[attr-defined]
+        elif _sys.platform == "darwin":
+            subprocess.Popen(["open", str(path)])
+        else:
+            subprocess.Popen(["xdg-open", str(path)])
+    except Exception as exc:
+        st.warning(f"Could not open the folder: {exc}")
+
+
+def tail(path: Path, n: int = 60) -> str:
+    try:
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            lines = fh.read().splitlines()
+    except FileNotFoundError:
+        return ""
+    # TensorFlow's progress bars rewrite one line many times; keep only the last copy.
+    lines = [ln.split("\r")[-1] for ln in lines]
+    return "\n".join(lines[-n:])
+
+
+def tif_ui(settings: dict) -> None:
+    if installed_base() is None:
+        st.warning("This mode needs the one-click install (see HOW_TO_INSTALL.md) and must be "
+                   "started from the **Calcium Pipeline** launcher on the Desktop. "
+                   "Without it, run Suite2p yourself and use the other modes.")
+        return
+
+    st.subheader("1 · Pick the folder with your microscope files")
+    st.caption("The folder that directly contains the `.tif` movies (one plate or one "
+               "experiment). Files saved in parts (`…-file002.tif`) are joined automatically.")
+    c1, c2 = st.columns([4, 1])
+    with c1:
+        folder_str = st.text_input("Folder of TIFs", key="tif_folder",
+                                   label_visibility="collapsed",
+                                   placeholder="e.g. D:\\Imaging\\2026-09-28 plate 1")
+    with c2:
+        if st.button("Browse…", key="tif_browse", use_container_width=True):
+            picked = pick_folder_dialog("Select the folder that contains the .tif movies")
+            if picked:
+                st.session_state["tif_folder"] = picked
+                st.rerun()
+    folder = normalize_path(folder_str)
+    if not folder:
+        return
+    if not folder.is_dir():
+        st.error(f"Not a folder: {folder}")
+        return
+
+    # An analysis already running (or finished) on this folder takes over the page.
+    state = run_state(folder)
+    if run_alive(state):
+        progress_panel(folder, state)
+        return
+    if state:
+        finished_banner(folder)
+
+    n_tif = sum(1 for p in folder.iterdir() if p.is_file()
+                and p.suffix.lower() in (".tif", ".tiff") and not p.name.startswith("._"))
+    n_done = sum(1 for _ in folder.glob("*/suite2p/plane0/F.npy"))
+    if n_tif == 0 and n_done == 0:
+        st.error("No `.tif` files directly inside this folder. Pick the folder that holds "
+                 "the movies themselves (not a folder above it).")
+        return
+    st.success(f"Found {n_tif} `.tif` file(s)"
+               + (f" · {n_done} recording(s) already through stage 1" if n_done else ""))
+
+    st.subheader("2 · Which indicator was imaged?")
+    labels = [i["label"] for i in INDICATORS]
+    ind_idx = st.radio("Indicator", range(len(labels)), format_func=lambda i: labels[i],
+                       index=guess_indicator_idx(folder), key="tif_ind")
+    st.caption(INDICATORS[ind_idx]["note"])
+
+    with st.expander("Options"):
+        delete_bin = st.checkbox(
+            "Delete Suite2p's large temporary file (data.bin) after each recording",
+            value=True,
+            help="Each recording's data.bin is 0.6-2 GB. It is only needed to re-run cell "
+                 "detection inside the Suite2p program, so deleting it is safe for this "
+                 "analysis and saves a lot of disk space.")
+        force = st.checkbox("Redo recordings that were already analysed", value=False)
+        fps_override = st.number_input(
+            "Frame rate in Hz — ONLY if the check below says “NO RATE”", min_value=0.0,
+            max_value=1000.0, value=0.0, step=1.0,
+            help="Normally the frame rate is read from each file's own timestamps "
+                 "(MetaMorph/MetaSeries TIFs). TIFs from other software may not carry "
+                 "them; then type the acquisition rate here. It applies to every file "
+                 "in the folder. Leave at 0 otherwise.") or None
+
+    st.subheader("3 · Check, then start")
+    if st.button("🔍 Check the folder first (reads every file's frame rate, changes nothing)"):
+        with st.spinner("Reading the files…"):
+            r = subprocess.run(analyze_argv(folder, ind_idx, dry_run=True, fps=fps_override),
+                               capture_output=True, text=True, cwd=str(REPO_ROOT),
+                               encoding="utf-8", errors="replace",
+                               env={**os.environ, "PYTHONUTF8": "1"})
+        st.session_state["tif_check"] = {"folder": str(folder), "rc": r.returncode,
+                                         "out": (r.stdout + r.stderr)[-6000:]}
+    chk = st.session_state.get("tif_check")
+    checked_ok = bool(chk and chk["folder"] == str(folder) and chk["rc"] == 0)
+    if chk and chk["folder"] == str(folder):
+        st.code(chk["out"], language="text")
+        if chk["rc"] == 0:
+            st.caption("Each row is one recording, with its frame rate read from the file's own "
+                       "timestamps. 'SKIP (done)' rows were already processed.")
+        elif "NO RATE" in chk["out"]:
+            st.error("These files carry no timestamps, so their frame rate is unknown. Open "
+                     "**Options** above, type the acquisition frame rate, and check again.")
+        else:
+            st.error("The check found a problem (see the last lines above). Fix it before starting.")
+
+    st.info("The analysis runs **in the background**: you can close this browser tab and "
+            "come back later (open the program and pick the same folder). Keep the computer on. "
+            "Rough time: 3-6 minutes per recording on a normal computer.")
+    if not checked_ok:
+        st.caption("Run the check above first; Start becomes available when it finds no problem.")
+    if st.button("▶ Start the analysis", type="primary", disabled=not checked_ok):
+        start_background(folder, analyze_argv(folder, ind_idx, force=force, delete_bin=delete_bin,
+                                              fps=fps_override))
+        st.rerun()
+
+    show_results_folder(folder)
+
+
+def show_results_folder(folder: Path) -> None:
+    results = folder / "RESULTS"
+    wbs = sorted(results.glob("*_metrics.xlsx")) if results.is_dir() else []
+    if not wbs:
+        return
+    st.divider()
+    st.subheader(f"Results — {len(wbs)} workbook(s) in RESULTS")
+    if st.button("📂 Open the RESULTS folder"):
+        open_in_file_browser(results)
+    pick = st.selectbox("Show the Key Numbers of", [w.name for w in wbs], key="tif_show")
+    if pick:
+        render_results(results / pick)
+
+
+def progress_panel(folder: Path, state: dict) -> None:
+    st.info(f"⏳ Analysis running on this folder (started {state.get('started', '?')}). "
+            "You can close this browser tab; it keeps going.")
+    if st.button("■ Stop the analysis"):
+        stop_background(state["pid"])
+        st.warning("Stopped. Starting again later continues where it left off.")
+        time.sleep(1)
+        st.rerun()
+
+    @st.fragment(run_every=5)
+    def live():
+        s = run_state(folder)
+        if not run_alive(s):
+            st.rerun()   # finished: redraw the whole page with the results
+        st.code(tail(folder / "RESULTS" / RUN_LOG), language="text")
+    live()
+
+
+def finished_banner(folder: Path) -> None:
+    """After a background run has ended, say how it went."""
+    log = tail(folder / "RESULTS" / RUN_LOG, 400)
+    summary = log[log.rfind("SUMMARY"):] if "SUMMARY" in log else log[-2500:]
+    if "recordings analysed" in log:
+        st.success("The last analysis of this folder has finished.")
+    else:
+        st.error("The last analysis of this folder stopped before the end. Its last lines:")
+    st.code(summary, language="text")
+
+
 # ── Page ───────────────────────────────────────────────────────────────────
 st.set_page_config(page_title="Calcium Network Pipeline", page_icon="🧠", layout="centered")
 settings = load_settings()
 
 st.title("🧠 Calcium Network Pipeline")
-st.caption("Stages 2–3: CASCADE spike inference + network/synchrony metrics. "
-           "Run Suite2p (stage 1) yourself first — this takes its output folder.")
+st.caption("From microscope movies to activity and network-synchrony numbers: "
+           "Suite2p (cell detection) → CASCADE (spike inference) → network metrics.")
 
-# --- Execution settings (set once, remembered) -----------------------------
-with st.expander("⚙️ How to run the pipeline (set this once)", expanded=not SETTINGS_PATH.is_file()):
-    envs = list_conda_envs()
-    have_docker = docker_available()
+if installed_base() is not None:
+    # One-click install: every stage has its own environment in a known place.
+    settings["mode"] = "installed"
+    st.caption(f"Using the installed pipeline in `{installed_base().parent}`.")
+else:
+    if settings.get("mode") == "installed":   # saved by an installed copy; not usable here
+        settings.pop("mode")
+    # --- Execution settings (set once, remembered) -----------------------------
+    with st.expander("⚙️ How to run the pipeline (set this once)", expanded=not SETTINGS_PATH.is_file()):
+        envs = list_conda_envs()
+        have_docker = docker_available()
 
-    mode_options = []
-    if envs:
-        mode_options.append("conda")
-    if have_docker:
-        mode_options.append("docker")
-    mode_options.append("direct")
-    default_mode = settings.get("mode") or mode_options[0]
-    if default_mode not in mode_options:
-        mode_options.insert(0, default_mode)
-
-    mode = st.radio(
-        "Execution mode",
-        mode_options,
-        index=mode_options.index(default_mode),
-        help=("conda: run in your named conda envs (recommended for the manual install).  "
-              "docker: use the bundled image (needs Docker Desktop).  "
-              "direct: one Python that has everything including TensorFlow."),
-        horizontal=True,
-    )
-    settings["mode"] = mode
-
-    if mode == "conda":
+        mode_options = []
         if envs:
-            a_default = settings.get("analysis_env") or _prefer(envs, "analysis", "cascade")
-            c_default = settings.get("cascade_env") or _prefer(envs, "cascade")
-            settings["analysis_env"] = st.selectbox(
-                "Analysis env (runs metrics + orchestration)",
-                envs, index=envs.index(a_default) if a_default in envs else 0)
-            settings["cascade_env"] = st.selectbox(
-                "CASCADE env (stage 2, needs TensorFlow)",
-                envs, index=envs.index(c_default) if c_default in envs else 0)
-        else:
-            st.info("No conda envs detected. Switch to 'direct' or 'docker'.")
-    elif mode == "docker":
-        settings["image"] = st.text_input(
-            "Docker image",
-            settings.get("image", "ghcr.io/samuelchu030609-commits/calcium-network-pipeline:latest"))
-    else:  # direct
-        settings["python_path"] = st.text_input(
-            "Python interpreter (must import numpy/scipy/pandas + TensorFlow for CASCADE)",
-            settings.get("python_path", "python"))
-        if envs:
-            c_default = settings.get("cascade_env") or _prefer(envs, "cascade")
-            use_sep = st.checkbox("CASCADE (stage 2) lives in a separate conda env",
-                                  value=bool(settings.get("cascade_env")))
-            settings["cascade_env"] = (
-                st.selectbox("CASCADE env", envs, index=envs.index(c_default) if c_default in envs else 0)
-                if use_sep else None)
+            mode_options.append("conda")
+        if have_docker:
+            mode_options.append("docker")
+        mode_options.append("direct")
+        default_mode = settings.get("mode") or mode_options[0]
+        if default_mode not in mode_options:
+            mode_options.insert(0, default_mode)
 
-    if st.button("💾 Save these settings"):
-        save_settings(settings)
-        st.success("Saved.")
+        mode = st.radio(
+            "Execution mode",
+            mode_options,
+            index=mode_options.index(default_mode),
+            help=("conda: run in your named conda envs (recommended for the manual install).  "
+                  "docker: use the bundled image (needs Docker Desktop).  "
+                  "direct: one Python that has everything including TensorFlow."),
+            horizontal=True,
+        )
+        settings["mode"] = mode
+
+        if mode == "conda":
+            if envs:
+                a_default = settings.get("analysis_env") or _prefer(envs, "analysis", "cascade")
+                c_default = settings.get("cascade_env") or _prefer(envs, "cascade")
+                settings["analysis_env"] = st.selectbox(
+                    "Analysis env (runs metrics + orchestration)",
+                    envs, index=envs.index(a_default) if a_default in envs else 0)
+                settings["cascade_env"] = st.selectbox(
+                    "CASCADE env (stage 2, needs TensorFlow)",
+                    envs, index=envs.index(c_default) if c_default in envs else 0)
+            else:
+                st.info("No conda envs detected. Switch to 'direct' or 'docker'.")
+        elif mode == "docker":
+            settings["image"] = st.text_input(
+                "Docker image",
+                settings.get("image", "ghcr.io/samuelchu030609-commits/calcium-network-pipeline:latest"))
+        else:  # direct
+            settings["python_path"] = st.text_input(
+                "Python interpreter (must import numpy/scipy/pandas + TensorFlow for CASCADE)",
+                settings.get("python_path", "python"))
+            if envs:
+                c_default = settings.get("cascade_env") or _prefer(envs, "cascade")
+                use_sep = st.checkbox("CASCADE (stage 2) lives in a separate conda env",
+                                      value=bool(settings.get("cascade_env")))
+                settings["cascade_env"] = (
+                    st.selectbox("CASCADE env", envs, index=envs.index(c_default) if c_default in envs else 0)
+                    if use_sep else None)
+
+        if st.button("💾 Save these settings"):
+            save_settings(settings)
+            st.success("Saved.")
 
 st.divider()
 
@@ -838,12 +1156,18 @@ def compare_ui(settings: dict) -> None:
 
 
 # ── Mode switch ────────────────────────────────────────────────────────────
-ui_mode = st.radio("Mode", ["Single recording", "Batch queue", "Compare recordings"],
-                   horizontal=True, label_visibility="collapsed", key="ui_mode")
+MODES = ["From microscope files", "One Suite2p recording", "Batch of Suite2p recordings",
+         "Compare recordings"]
+ui_mode = st.radio("Mode", MODES, horizontal=True, label_visibility="collapsed", key="ui_mode",
+                   help="From microscope files: all three stages, starting from the .tif movies. "
+                        "The two Suite2p modes start from folders that already contain "
+                        "Suite2p output (suite2p/plane0). Compare: pool finished workbooks.")
 st.divider()
-if ui_mode == "Single recording":
+if ui_mode == "From microscope files":
+    tif_ui(settings)
+elif ui_mode == "One Suite2p recording":
     single_recording_ui(settings)
-elif ui_mode == "Batch queue":
+elif ui_mode == "Batch of Suite2p recordings":
     batch_ui(settings)
 else:
     compare_ui(settings)
