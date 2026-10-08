@@ -71,9 +71,10 @@ jobs:
                 "| threads", torch.get_num_threads(), "| mps", torch.backends.mps.is_available())
           print("mean image min/max", float(mean.min()), float(mean.max()), "finite", bool(np.isfinite(mean).all()))
           from cellpose import models
-          m = models.CellposeModel(gpu=False)
-          masks = m.eval(mean, diameter=12)[0]
-          print("cellpose on raw mean image ->", int(masks.max()), "cells (25 planted)")
+          for gpu in (False, True):
+              m = models.CellposeModel(gpu=gpu)
+              masks = m.eval(mean, diameter=12)[0]
+              print("cellpose gpu=%s on raw mean image ->" % gpu, int(masks.max()), "cells (25 planted)")
           PYEOF
           find /var/folders -path "*cnp_selftest*" -name "*.npy" 2>/dev/null | head -20
           for f in $(find /var/folders -path "*cnp_selftest*/plane0/reg_outputs.npy" 2>/dev/null); do
