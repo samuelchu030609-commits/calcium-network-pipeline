@@ -48,35 +48,27 @@ jobs:
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
-      - name: Run the installer exactly as the guide says
-        run: bash INSTALL_MAC.sh
+      - name: Run the installer exactly as the guide says (self-test runs below)
+        run: CNP_SKIP_SELFTEST=1 bash INSTALL_MAC.sh
+      - name: Hide the runner's virtual GPU from Cellpose
+        # GitHub's macOS runners are virtual machines whose virtual GPU (MPS)
+        # returns no cells from Cellpose (0/25 on the self-test movie, while the
+        # CPU on the same runner finds 25/25, as does MPS on a real Apple Silicon
+        # Mac). Suite2p sends Cellpose to the GPU whenever one is reported, so on
+        # this runner only, report none. Real users' installs are not touched.
+        run: |
+          SP=$(~/CalciumPipeline/conda/envs/suite2p/bin/python -c "import site; print(site.getsitepackages()[0])")
+          printf 'import torch\ntorch.backends.mps.is_available = lambda: False\n' > "$SP/sitecustomize.py"
+          ~/CalciumPipeline/conda/envs/suite2p/bin/python -c "import torch; assert not torch.backends.mps.is_available()"
+      - name: Self-test
+        run: |
+          CNP_CONDA_BASE=~/CalciumPipeline/conda PYTHONUTF8=1 \
+            ~/CalciumPipeline/conda/envs/analysis/bin/python ~/CalciumPipeline/code/install/self_test.py \
+            2>&1 | tee -a ~/CalciumPipeline/install_log.txt
+          exit ${PIPESTATUS[0]}
       - name: Upload the install log
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: macos-install-log
           path: ~/CalciumPipeline/install_log.txt
-      - name: Diagnose cell detection if the self-test failed
-        if: failure()
-        run: |
-          PY=~/CalciumPipeline/conda/envs/suite2p/bin/python
-          cd ~/CalciumPipeline/code
-          $PY - <<'PYEOF'
-          import sys, subprocess, numpy as np, tifffile, torch, platform
-          sys.path.insert(0, "install"); import self_test
-          subprocess.run([sys.executable, "-c", self_test.MOVIE_SNIPPET, "/tmp/diag.tif"], check=True)
-          mov = tifffile.imread("/tmp/diag.tif").astype(np.float32)
-          mean = mov.mean(0)
-          print("machine", platform.machine(), platform.processor(), "| torch", torch.__version__,
-                "| threads", torch.get_num_threads(), "| mps", torch.backends.mps.is_available())
-          print("mean image min/max", float(mean.min()), float(mean.max()), "finite", bool(np.isfinite(mean).all()))
-          from cellpose import models
-          for gpu in (False, True):
-              m = models.CellposeModel(gpu=gpu)
-              masks = m.eval(mean, diameter=12)[0]
-              print("cellpose gpu=%s on raw mean image ->" % gpu, int(masks.max()), "cells (25 planted)")
-          PYEOF
-          find /var/folders -path "*cnp_selftest*" -name "*.npy" 2>/dev/null | head -20
-          for f in $(find /var/folders -path "*cnp_selftest*/plane0/reg_outputs.npy" 2>/dev/null); do
-            $PY -c "import numpy as np,sys; r=np.load(sys.argv[1],allow_pickle=True).item(); mi=r.get('meanImg'); print('registered meanImg', None if mi is None else (float(np.nanmin(mi)), float(np.nanmax(mi)), int(np.isnan(mi).sum()),'NaNs')); print('keys', list(r)[:30])" "$f"
-          done

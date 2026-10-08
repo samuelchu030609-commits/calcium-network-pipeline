@@ -194,6 +194,9 @@ fi
 
 # ---------------------------------------------------------------- 6. self-test
 step "7/7  Self-test (about 3-5 minutes)"
+if [ "${CNP_SKIP_SELFTEST:-}" = "1" ]; then      # used only by the automatic GitHub test
+  warn "self-test skipped (CNP_SKIP_SELFTEST=1)"; exit 0
+fi
 if CNP_CONDA_BASE="$CONDA_HOME" PYTHONUTF8=1 "$(env_py analysis)" "$CODE/install/self_test.py"; then
   printf '\n%s\n' "${cg}${c1}INSTALLATION COMPLETE - self-test PASSED.${c0}"
   echo "To start: double-click \"Calcium Pipeline\" on your Desktop."
