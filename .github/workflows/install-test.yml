@@ -58,8 +58,9 @@ jobs:
         # this runner only, report none. Real users' installs are not touched.
         run: |
           SP=$(~/CalciumPipeline/conda/envs/suite2p/bin/python -c "import site; print(site.getsitepackages()[0])")
-          printf 'import torch\ntorch.backends.mps.is_available = lambda: False\n' > "$SP/sitecustomize.py"
-          ~/CalciumPipeline/conda/envs/suite2p/bin/python -c "import torch; assert not torch.backends.mps.is_available()"
+          # Cellpose decides "GPU or not" in cellpose.core._use_gpu_torch; answer "no".
+          printf 'import cellpose.core as _c\n_c._use_gpu_torch = lambda gpu_number=0: False\n' > "$SP/sitecustomize.py"
+          ~/CalciumPipeline/conda/envs/suite2p/bin/python -c "from cellpose import core; assert not core.use_gpu(); print('Cellpose will use the CPU')"
       - name: Self-test
         run: |
           CNP_CONDA_BASE=~/CalciumPipeline/conda PYTHONUTF8=1 \
