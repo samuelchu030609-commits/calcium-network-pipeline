@@ -148,8 +148,18 @@ are not touched.
      Check again.
 4. **Click "Start the analysis".** Progress appears on the page and updates by itself.
 
-**Timing:** about **3–6 minutes per recording** for a 3-minute movie on a normal
-computer, so a 16-well plate takes 1–2 hours and 64 recordings take most of a night.
+**Timing** for a 3-minute movie with a 1024 × 1024 field of view. Almost all of it is
+cell detection (Cellpose):
+
+| Computer | Per recording | 16 recordings | 64 recordings |
+|---|---|---|---|
+| Apple Silicon Mac (uses its built-in graphics chip) | 3–6 minutes | 1–2 hours | 4–7 hours (one night) |
+| Windows PC (uses the processor) | 30–60 minutes | about a day | 1½–3 days |
+
+*Measured on recording B05: cell detection took 1 minute on a Mac's graphics chip and 40
+minutes on its processor. Both found the same cells (434 vs 435, 99% the same pixels).*
+On Windows, start big folders on a Friday, or split them across several PCs: each PC
+analyses its own folder.
 **You can close the browser tab** and the analysis keeps running. To check on it, open
 **Calcium Pipeline** again and pick the same folder. Keep the computer switched on
 (the program stops it from going to sleep by itself).
