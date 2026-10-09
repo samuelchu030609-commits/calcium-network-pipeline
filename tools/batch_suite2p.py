@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 """Stage 1 in bulk: run Suite2p over every TIF in a folder, one recording each.
 
-The GUI in calcium-network-pipeline/gui/ batches stages 2-3 (CASCADE + metrics) but
+The GUI in iNeuron-NetSync/gui/ batches stages 2-3 (CASCADE + metrics) but
 does NOT run Suite2p. This closes that gap so a whole plate is one command instead of
 N passes through the Suite2p GUI.
 

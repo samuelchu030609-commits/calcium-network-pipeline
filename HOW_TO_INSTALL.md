@@ -1,4 +1,4 @@
-# How to install and use the Calcium Network Pipeline
+# How to install and use iNeuron-NetSync
 
 This guide takes you from **nothing installed** to **analysed recordings**. You do not
 need to know anything about programming or GitHub. Follow the steps in order. After
@@ -37,20 +37,20 @@ indicator, contact us first: the spike-inference model has to match the indicato
 
 ### Step W1 — Download the pipeline
 
-1. Click this link: **<https://github.com/samuelchu030609-commits/calcium-network-pipeline/archive/refs/heads/main.zip>**
-   A file named `calcium-network-pipeline-main.zip` downloads (a small file, under 1 MB).
+1. Click this link: **<https://github.com/samuelchu030609-commits/iNeuron-NetSync/archive/refs/heads/main.zip>**
+   A file named `iNeuron-NetSync-main.zip` downloads (a small file, under 1 MB).
    No GitHub account is needed.
 2. Open your **Downloads** folder. **Right-click** the ZIP file → **Properties**. At the
    bottom of the *General* tab, tick **Unblock** (if it is there) → **OK**.
    *(This tells Windows the file is safe and avoids security warnings later.)*
 3. Right-click the ZIP file again → **Extract All…** → **Extract**.
 
-> ✅ **You should see** a folder named `calcium-network-pipeline-main`. Inside it are
+> ✅ **You should see** a folder named `iNeuron-NetSync-main`. Inside it are
 > files such as `INSTALL_WINDOWS.bat`, `HOW_TO_INSTALL.md` and `README.md`.
 
 ### Step W2 — Run the installer
 
-1. Open the `calcium-network-pipeline-main` folder.
+1. Open the `iNeuron-NetSync-main` folder.
 2. **Double-click `INSTALL_WINDOWS.bat`.**
    (If Windows hides file endings, it shows as `INSTALL_WINDOWS` with a gear icon.)
 3. If a blue box says **"Windows protected your PC"**, click **More info** → **Run anyway**.
@@ -60,14 +60,14 @@ indicator, contact us first: the spike-inference model has to match the indicato
 
 > ✅ **You should see**, at the end, in green:
 > `INSTALLATION COMPLETE - self-test PASSED.`
-> and a new **Calcium Pipeline** icon on your Desktop. Press any key to close the window.
+> and a new **iNeuron-NetSync** icon on your Desktop. Press any key to close the window.
 >
 > ❌ **If it says `STOPPED:`** the line after it says why, in plain words. See
 > [Troubleshooting](#troubleshooting). The installer is safe to run again: it continues
 > where it stopped.
 
-**Where things go:** the program is installed in `C:\CalciumPipeline`, or in
-`C:\Users\<you>\CalciumPipeline` if your PC does not allow the first. Two helper folders
+**Where things go:** the program is installed in `C:\iNeuron-NetSync`, or in
+`C:\Users\<you>\iNeuron-NetSync` if your PC does not allow the first. Two helper folders
 are created in `C:\Users\<you>`: `Cascade` and `.cellpose`. Nothing else on the PC is
 changed, and Python programs you may already have are not touched.
 
@@ -82,11 +82,11 @@ everything it needs.
 
 ### Step M1 — Download the pipeline
 
-1. Click this link: **<https://github.com/samuelchu030609-commits/calcium-network-pipeline/archive/refs/heads/main.zip>**
+1. Click this link: **<https://github.com/samuelchu030609-commits/iNeuron-NetSync/archive/refs/heads/main.zip>**
 2. Open your **Downloads** folder. Safari usually unzips it by itself. If you see only a
    `.zip` file, double-click it.
 
-> ✅ **You should see** a folder named `calcium-network-pipeline-main` containing
+> ✅ **You should see** a folder named `iNeuron-NetSync-main` containing
 > `INSTALL_MAC.sh`, `HOW_TO_INSTALL.md` and `README.md`.
 
 ### Step M2 — Run the installer
@@ -98,18 +98,18 @@ type one word.
 2. In the Terminal window, type `bash` followed by **one space**. Do not press Return yet.
 3. **Drag** the file `INSTALL_MAC.sh` from the Finder window **into the Terminal window**.
    Its location is filled in for you, so the line now looks like
-   `bash /Users/you/Downloads/calcium-network-pipeline-main/INSTALL_MAC.sh`.
+   `bash /Users/you/Downloads/iNeuron-NetSync-main/INSTALL_MAC.sh`.
 4. Press **Return**.
 5. **Leave the window open** while it works through 7 steps.
 
 > ✅ **You should see**, at the end, in green:
 > `INSTALLATION COMPLETE - self-test PASSED.`
-> and a new **Calcium Pipeline** icon on your Desktop.
+> and a new **iNeuron-NetSync** icon on your Desktop.
 >
 > ❌ **If it says `STOPPED`**, see [Troubleshooting](#troubleshooting). It is safe to run
 > again: it continues where it stopped.
 
-**Where things go:** `~/CalciumPipeline` (the program), plus `~/Cascade` and `~/.cellpose`
+**Where things go:** `~/iNeuron-NetSync` (the program), plus `~/Cascade` and `~/.cellpose`
 in your home folder. Nothing else is changed. If you already have Python or conda, they
 are not touched.
 
@@ -119,11 +119,11 @@ are not touched.
 
 ### Step 1 — Open the program
 
-**Double-click Calcium Pipeline** on the Desktop.
+**Double-click iNeuron-NetSync** on the Desktop.
 
 - A black (Windows) or white (Mac) text window opens: this is the program's engine room.
   **Keep it open while you work.** Closing it closes the program.
-- After a few seconds your web browser opens a page titled **Calcium Network Pipeline**.
+- After a few seconds your web browser opens a page titled **iNeuron-NetSync**.
   It runs **only on your computer**. Nothing is uploaded to the internet.
 - *Mac, first time only:* macOS may ask whether Terminal may access a folder (Desktop,
   Documents, an external drive). Click **Allow**.
@@ -164,7 +164,7 @@ On Windows, start big folders before a weekend, or split them across several PCs
 analyses its own folder).
 
 **You can close the browser tab** and the analysis keeps running. To check on it, open
-**Calcium Pipeline** again and pick the same folder. Keep the computer switched on. The
+**iNeuron-NetSync** again and pick the same folder. Keep the computer switched on. The
 program stops it from going to sleep by itself, but **a laptop still sleeps when its lid
 is closed**, so leave the lid open and the charger plugged in.
 
@@ -210,9 +210,9 @@ stages on a small synthetic movie.
 ## Uninstalling
 
 Delete these folders and the Desktop icon:
-- Windows: `C:\CalciumPipeline` (or `C:\Users\<you>\CalciumPipeline`),
+- Windows: `C:\iNeuron-NetSync` (or `C:\Users\<you>\iNeuron-NetSync`),
   `C:\Users\<you>\Cascade`, `C:\Users\<you>\.cellpose`
-- Mac: `~/CalciumPipeline`, `~/Cascade`, `~/.cellpose`
+- Mac: `~/iNeuron-NetSync`, `~/Cascade`, `~/.cellpose`
   (in Finder: **Go → Home**; press **⌘ Shift .** to see hidden folders such as `.cellpose`)
 
 ---
@@ -229,9 +229,9 @@ send that file along with any question.
 | **`STOPPED: Cannot reach the internet`** | The PC is offline, or the lab network blocks the download sites. Ask IT to allow `conda.anaconda.org`, `pypi.org`, `files.pythonhosted.org`, `github.com` and `drive.switch.ch`. |
 | **`STOPPED: Could not download the CASCADE model`** | The CASCADE model server (`drive.switch.ch`) is blocked. Ask IT to allow it, or ask us for the two model folders and copy them into `Cascade\Pretrained_models`. Then run the installer again. |
 | **`STOPPED: Could not build the … environment`** / **`Could not install packages`** | Usually a download that broke halfway. Run the installer again. If it fails twice at the same place, send us `install_log.txt`. |
-| Installing **TensorFlow** fails with *"No such file or directory"* (Windows) | The install folder path is too long for Windows. Ask IT to either allow creating `C:\CalciumPipeline`, or enable "Win32 long paths". Then run again. |
+| Installing **TensorFlow** fails with *"No such file or directory"* (Windows) | The install folder path is too long for Windows. Ask IT to either allow creating `C:\iNeuron-NetSync`, or enable "Win32 long paths". Then run again. |
 | The installer **seems frozen** | It is almost always still working: antivirus checks each of the tens of thousands of files it writes. Wait. Only if nothing at all changes for over an hour, close it and run it again; it resumes. |
-| **`STOPPED: … contains a space or an accented letter`** | Your Windows user name has a space, and `C:\CalciumPipeline` could not be created. Ask IT to allow creating that folder. |
+| **`STOPPED: … contains a space or an accented letter`** | Your Windows user name has a space, and `C:\iNeuron-NetSync` could not be created. Ask IT to allow creating that folder. |
 | **`The self-test FAILED`** | The lines marked `FAIL` above it say which part. Send us `install_log.txt`. |
 | The browser page **does not open** | Wait 30 seconds, then type `localhost:8501` in your browser's address bar. |
 | **Check the folder** says **"NO RATE"** | Your TIFs carry no timestamps. Type the acquisition frame rate under **Options**. |
@@ -246,8 +246,8 @@ send that file along with any question.
 
 - **Command line / overnight runs.** The page's "From microscope files" mode runs
   `tools/analyze_folder.py` with the install's own Python. You can run it directly:
-  - Windows: `C:\CalciumPipeline\conda\envs\analysis\python.exe C:\CalciumPipeline\code\tools\analyze_folder.py "D:\plate" --indicator jgcamp8s --delete-bin`
-  - Mac: `~/CalciumPipeline/conda/envs/analysis/bin/python ~/CalciumPipeline/code/tools/analyze_folder.py ~/data/plate --indicator jgcamp8s --delete-bin`
+  - Windows: `C:\iNeuron-NetSync\conda\envs\analysis\python.exe C:\iNeuron-NetSync\code\tools\analyze_folder.py "D:\plate" --indicator jgcamp8s --delete-bin`
+  - Mac: `~/iNeuron-NetSync/conda/envs/analysis/bin/python ~/iNeuron-NetSync/code/tools/analyze_folder.py ~/data/plate --indicator jgcamp8s --delete-bin`
 
   Add `--dry-run` to only list the recordings. `--fps 10` sets the frame rate for TIFs
   without timestamps.

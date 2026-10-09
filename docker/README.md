@@ -16,7 +16,7 @@ image is not published**, so build it yourself once (below). You also need:
 From the repository's top folder, with Docker running:
 
 ```
-docker build -f docker/Dockerfile -t ghcr.io/samuelchu030609-commits/calcium-network-pipeline:latest .
+docker build -f docker/Dockerfile -t ghcr.io/samuelchu030609-commits/ineuron-netsync:latest .
 ```
 
 `docker/run.sh` (macOS/Linux) and `docker/run.bat` (Windows) then run it on one recording
@@ -44,7 +44,7 @@ docker\run.bat "C:\path\to\recording"
 ## Verify
 
 ```
-docker run --rm ghcr.io/samuelchu030609-commits/calcium-network-pipeline:latest --help
+docker run --rm ghcr.io/samuelchu030609-commits/ineuron-netsync:latest --help
 ```
 
 should print the pipeline usage.

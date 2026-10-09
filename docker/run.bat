@@ -3,7 +3,7 @@ REM End-user wrapper (Windows). Usage: run.bat "C:\path\to\recording"
 REM The folder must contain a suite2p\ subfolder and a config.json.
 REM You can also drag-and-drop the recording folder onto this file.
 
-set IMAGE=ghcr.io/samuelchu030609-commits/calcium-network-pipeline:latest
+set IMAGE=ghcr.io/samuelchu030609-commits/ineuron-netsync:latest
 
 if "%~1"=="" (
   echo Usage: run.bat "C:\path\to\recording"

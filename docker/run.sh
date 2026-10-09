@@ -3,7 +3,7 @@
 # The folder must contain a suite2p/ subfolder and a config.json.
 set -euo pipefail
 
-IMAGE="ghcr.io/samuelchu030609-commits/calcium-network-pipeline:latest"
+IMAGE="ghcr.io/samuelchu030609-commits/ineuron-netsync:latest"
 
 if [[ $# -lt 1 ]]; then
   echo "Usage: ./run.sh /path/to/recording"

@@ -1,4 +1,4 @@
-# calcium-network-pipeline — repo guide
+# iNeuron-NetSync — repo guide
 
 Shareable, CPU-only distribution of the calcium pipeline for OTHER LABS (non-programmers).
 Main path: the **one-click install** (`INSTALL_WINDOWS.bat` / `INSTALL_MAC.sh` → `install/`)
