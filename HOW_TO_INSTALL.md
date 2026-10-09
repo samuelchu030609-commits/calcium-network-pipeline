@@ -38,8 +38,8 @@ indicator, contact us first: the spike-inference model has to match the indicato
 ### Step W1 — Download the pipeline
 
 1. Click this link: **<https://github.com/samuelchu030609-commits/calcium-network-pipeline/archive/refs/heads/main.zip>**
-   A file named `calcium-network-pipeline-main.zip` downloads (about 1 MB). No GitHub
-   account is needed.
+   A file named `calcium-network-pipeline-main.zip` downloads (a small file, under 1 MB).
+   No GitHub account is needed.
 2. Open your **Downloads** folder. **Right-click** the ZIP file → **Properties**. At the
    bottom of the *General* tab, tick **Unblock** (if it is there) → **OK**.
    *(This tells Windows the file is safe and avoids security warnings later.)*
