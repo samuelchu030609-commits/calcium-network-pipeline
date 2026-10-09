@@ -588,9 +588,11 @@ def tif_ui(settings: dict) -> None:
 
     st.info("The analysis runs **in the background**: you can close this browser tab and "
             "come back later (open the program and pick the same folder). Keep the computer on. "
-            + ("Rough time: 3-6 minutes per recording." if _sys.platform == "darwin" else
-               "Rough time: 30-60 minutes per recording (cell detection runs on the processor), "
-               "so a 64-recording plate takes 1.5-3 days."))
+            + ("Rough time for 3-minute movies: about 5-6 minutes per recording "
+               "(64 recordings in about 6 hours)." if _sys.platform == "darwin" else
+               "Rough time for 3-minute movies: about 45 minutes per recording, because cell "
+               "detection runs on the processor (64 recordings in about 2 days).")
+            + " On a laptop, keep the lid open: closing it still puts the computer to sleep.")
     if not checked_ok:
         st.caption("Run the check above first; Start becomes available when it finds no problem.")
     if st.button("▶ Start the analysis", type="primary", disabled=not checked_ok):

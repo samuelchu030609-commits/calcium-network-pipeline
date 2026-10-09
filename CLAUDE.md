@@ -40,7 +40,13 @@ code, port the FINALIZED parent version, then re-run the acceptance test.
   `RUNID_metrics` placeholder survives. Keep that guard (a silent no-op once wrote junk files).
 - Every run emits `*_metrics.PROVENANCE.txt`; `cascade_meta.json` records the true model + rate
   (family derived from the model name, not the requested flag).
-- CPU-only, no GPU. `envs/cascade.yml` is pinned — **TF 2.15 requires numpy<2** (load-bearing).
+- No GPU needed. `envs/cascade.yml` is pinned — **TF 2.15 requires numpy<2** (load-bearing).
+- **Cellpose (inside Suite2p detection) uses a GPU whenever `cellpose.core.use_gpu()` says one
+  works**, ignoring Suite2p's `torch_device`: MPS on Apple Silicon; never on the Windows install
+  (CPU torch). B05 1024²: MPS 434 vs CPU 435 cells, 99.1% pixel overlap; CPU ~40 min vs MPS
+  1–2 min. GitHub's macOS runner has a broken virtual MPS (0 cells), so the workflow patches
+  `cellpose.core._use_gpu_torch` there only. Measured Mac throughput: 64 × 3-min recordings
+  in 5 h 51 min (M2 Pro). Keep HOW_TO_INSTALL.md's timing table in line with these.
 - `settings/pipeline_settings.npy` is the canonical Suite2p detection config (Cellpose, `img='meanImg'`,
   diameter 12) — the ONLY guard that users' stage-1 detection matches ours. Keep it shipped.
 

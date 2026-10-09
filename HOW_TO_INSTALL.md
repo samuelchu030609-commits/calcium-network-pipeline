@@ -148,21 +148,25 @@ are not touched.
      Check again.
 4. **Click "Start the analysis".** Progress appears on the page and updates by itself.
 
-**Timing** for a 3-minute movie with a 1024 × 1024 field of view. Almost all of it is
-cell detection (Cellpose):
+**How long it takes** for 3-minute movies (1800 frames, 1024 × 1024 pixels). Most of the
+time goes to motion correction and cell detection:
 
 | Computer | Per recording | 16 recordings | 64 recordings |
 |---|---|---|---|
-| Apple Silicon Mac (uses its built-in graphics chip) | 3–6 minutes | 1–2 hours | 4–7 hours (one night) |
-| Windows PC (uses the processor) | 30–60 minutes | about a day | 1½–3 days |
+| Apple Silicon Mac (cell detection runs on its built-in graphics chip) | about 5–6 minutes | about 1½ hours | about 6 hours (one night) |
+| Windows PC (cell detection runs on the processor) | about 45 minutes (30–60) | about 12 hours | about 2 days |
 
-*Measured on recording B05: cell detection took 1 minute on a Mac's graphics chip and 40
-minutes on its processor. Both found the same cells (434 vs 435, 99% the same pixels).*
-On Windows, start big folders on a Friday, or split them across several PCs: each PC
-analyses its own folder.
+*The Mac numbers are measured: 64 recordings took 5 h 51 min on an M2 Pro MacBook. The
+Windows numbers are estimated from measuring cell detection alone on recording B05, which
+took 1–2 minutes on the Mac's graphics chip and about 40 minutes on its processor. Both
+found the same cells (434 vs 435, 99% the same pixels), so only the speed differs.*
+On Windows, start big folders before a weekend, or split them across several PCs (each PC
+analyses its own folder).
+
 **You can close the browser tab** and the analysis keeps running. To check on it, open
-**Calcium Pipeline** again and pick the same folder. Keep the computer switched on
-(the program stops it from going to sleep by itself).
+**Calcium Pipeline** again and pick the same folder. Keep the computer switched on. The
+program stops it from going to sleep by itself, but **a laptop still sleeps when its lid
+is closed**, so leave the lid open and the charger plugged in.
 
 > ✅ **You should see**, when it is done:
 > `The last analysis of this folder has finished.` with one `ok` row per recording, and a
