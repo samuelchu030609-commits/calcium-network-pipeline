@@ -138,7 +138,11 @@ are not touched.
    found.
 2. **Choose the indicator** that was imaged (jGCaMP8s, jGCaMP8f or Fluo-4).
    *Getting this right matters:* each indicator uses its own calibrated model.
-3. **Click "Check the folder first".** It reads every file and lists one row per
+3. **Choose the detection profile**: the settings that decide which cells are found.
+   The built-in one, *Lippmann iNeurons, 10X*, suits iPSC-derived neurons imaged at 10X.
+   **For other cells or another magnification, make your own profile first** (see
+   [Your cells: a detection profile](#your-cells-a-detection-profile) below).
+4. **Click "Check the folder first".** It reads every file and lists one row per
    recording, with the **frame rate taken from the file's own timestamps**. Nothing is
    changed yet.
    - Rows ending in `run` will be analysed. Rows ending in `SKIP (done)` were already
@@ -146,7 +150,9 @@ are not touched.
    - **"NO RATE"** means your files carry no timestamps (common for TIFs not saved by
      MetaMorph). Open **Options**, type the frame rate you acquired at (in Hz), and click
      Check again.
-4. **Click "Start the analysis".** Progress appears on the page and updates by itself.
+   - **"REDO (detection settings changed)"** means that recording was analysed before
+     with another profile; it will be detected again and its old results replaced.
+5. **Click "Start the analysis".** Progress appears on the page and updates by itself.
 
 **How long it takes** for 3-minute movies (1800 frames, 1024 × 1024 pixels). Most of the
 time goes to motion correction and cell detection:
@@ -185,6 +191,40 @@ Click **📂 Open the RESULTS folder**. It is a new folder inside your recording
 Next to RESULTS, each recording also gets its own folder (e.g. `B05/suite2p/plane0/`)
 with Suite2p's complete output. You can open it in the Suite2p program to inspect the
 detected cells (see [For advanced users](#for-advanced-users)).
+
+### Your cells: a detection profile
+
+Cell detection depends on how large your cells look in the image, which depends on the
+cell type **and** on the objective and camera. Before analysing a new cell line or
+microscope set-up, make a profile once, on a few **control** recordings:
+
+1. Pick the folder, then open **✏️ Make a profile for your cells** (step 3 on the page).
+2. Set the **cell size**: the typical diameter of one cell body. Micrometres are easiest:
+   the program converts them to pixels using the pixel size each MetaMorph file stores.
+   (Measure a few cells in Fiji if you are unsure.) Use pixels if your files don't
+   record their pixel size; the preview tells you.
+3. Choose a recording and click **Preview cell detection**. You see the image with every
+   detected cell outlined in orange, and a cyan circle showing the size you entered.
+   On a Mac the whole image takes 1–2 minutes; on Windows start with the **small centre
+   area** (about 3 minutes).
+4. Adjust and preview again until the outlines sit on the cells:
+   - outlines much smaller or larger than the cells → change the **cell size**;
+   - faint cells missed → **lower** the *cell-probability threshold*;
+   - outlines on background or debris → **raise** it;
+   - many irregular blobs → **lower** the *shape threshold*.
+   Check two or three recordings, including a dense and a sparse one.
+5. Type a **name** (e.g. *Smith lab, HEK-iNeurons, 20X*) and notes, and click **Save as a
+   new profile**. It now appears in the profile list for every analysis.
+
+**Then keep it fixed.** Use the same profile for every recording of an experiment, and
+choose it *before* looking at group differences, so the settings cannot be tuned to
+produce a result. Each recording's settings are saved next to its results
+(`RESULTS/<well>_detection_settings.json`), and the **Compare recordings** page warns you if
+the recordings you compare were detected with different settings.
+
+Your profiles are stored in the install folder (`C:\iNeuron-NetSync\profiles` or
+`~/iNeuron-NetSync/profiles`), so updating the program keeps them. To share one with
+another lab, send them that `.json` file to put in the same folder.
 
 ### Comparing groups (optional)
 

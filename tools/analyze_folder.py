@@ -37,6 +37,9 @@ from datetime import datetime
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO / "tools"))
+import detection_profiles  # noqa: E402
+from batch_suite2p import previous_detection, same_detection, wanted_detection  # noqa: E402
 
 # What the user picks -> what config.json needs. Mirrors gui/app.py INDICATORS and
 # pipeline/config.py ROUTE_FAMILY.
@@ -127,6 +130,40 @@ def recordings(folder: Path) -> list[Path]:
                   if (p / "F.npy").is_file())
 
 
+def detection_check(plane0: Path, profile: dict):
+    """Were this recording's cells found with the chosen profile?
+
+    Returns (expected detection settings for the run_pipeline guard, None) when yes,
+    or (None, reason) when no -- e.g. stage 1 could not redo it after the profile
+    changed, so its old cells must not be analysed as if they were new ones.
+    """
+    rec_file = plane0 / "detection_settings.json"
+    size = float(profile["cell_size"])
+    if rec_file.is_file():
+        rec = json.loads(rec_file.read_text())
+        diam = float(rec["diameter_px"])
+        if profile["cell_size_unit"] == "um":
+            size_ok = rec.get("um_per_px") and abs(diam * rec["um_per_px"] - size) < 1e-3
+        else:
+            size_ok = abs(diam - size) < 1e-6
+        if not size_ok:
+            return None, (f"its cells were found with a cell size of {diam:.2f} px, not the "
+                          f"profile's {size:g} {'um' if profile['cell_size_unit'] == 'um' else 'px'}")
+    elif profile["cell_size_unit"] == "px":
+        diam = size
+    else:
+        return None, ("it has no record of the cell size used, so it cannot be checked "
+                      "against a profile given in micrometres")
+    want = wanted_detection(diam, profile["cellprob_threshold"], profile["flow_threshold"],
+                            profile["image"])
+    prev = previous_detection(plane0)
+    if prev is not None and not same_detection(want, prev):
+        return None, ("its cells were found with different detection settings than the "
+                      f"profile '{profile['name']}' (stage 1 did not redo it - see above)")
+    return {k: want[k] for k in ("cellpose_model", "img", "cellprob_threshold",
+                                 "flow_threshold", "diameter")}, None
+
+
 class Tee:
     """Send everything printed to the screen AND to the run log."""
 
@@ -161,7 +198,14 @@ def main() -> int:
     ap.add_argument("--fps", type=float, default=None,
                     help="Frame rate for ALL recordings. Only for TIFs that carry no "
                          "timestamps (stage 1 will tell you if so).")
+    ap.add_argument("--profile", default=None,
+                    help="Cell-detection profile: its name, or a profile .json file. "
+                         f"Default: '{detection_profiles.DEFAULT_NAME}'.")
     args = ap.parse_args()
+    try:
+        profile = detection_profiles.find(args.profile)
+    except ValueError as e:
+        sys.exit(str(e))
 
     folder = Path(args.folder).expanduser().resolve()
     if not folder.is_dir():
@@ -184,6 +228,7 @@ def main() -> int:
 
     print(f"Folder    : {folder}")
     print(f"Indicator : {choice['indicator']}  (route {choice['route']})")
+    print(f"Detection : {profile['name']} - {detection_profiles.describe(profile)}")
     print(f"Started   : {datetime.now():%Y-%m-%d %H:%M}\n")
 
     # ── Stage 1: Suite2p (skips finished recordings itself) ──
@@ -202,6 +247,7 @@ def main() -> int:
             s1.append("--delete-bin")
         if args.fps:
             s1 += ["--fps", str(args.fps)]
+        s1 += detection_profiles.stage1_args(profile)
         rc1 = stream(s1)
     else:
         # Re-analysing a folder whose TIFs were moved away is fine; nothing at all is not.
@@ -233,10 +279,19 @@ def main() -> int:
         print("#" * 72, flush=True)
         t0 = time.time()
 
+        expected, why = detection_check(plane0, profile)
+        if expected is None:
+            print(f"!! {why}", flush=True)
+            summary.append((rid, "SKIPPED: detected with other settings", 0))
+            continue
         if xlsx.is_file() and not args.force:
             print("already analysed - skipped (use --force to redo)")
             status = "ok (already done)"
         else:
+            # Copies from an earlier run must not outlive this one.
+            for old in (f"{rid}_metrics.xlsx", f"{rid}_metrics_baseline_qc.png",
+                        f"{rid}_detection_settings.json"):
+                (results_dir / old).unlink(missing_ok=True)
             fps = read_fps(plane0)
             if not fps:
                 summary.append((rid, "FAILED: no frame rate in ops.npy", 0))
@@ -253,7 +308,9 @@ def main() -> int:
                     (plane0 / f).unlink(missing_ok=True)
             cfg = {"_comment": "Written by tools/analyze_folder.py",
                    "indicator": choice["indicator"], "native_fps": fps,
-                   "route": choice["route"], "neuropil_coeff": 0.7}
+                   "route": choice["route"], "neuropil_coeff": 0.7,
+                   "detection_profile": profile["name"],
+                   "detection_expected": expected}
             (rec / "config.json").write_text(json.dumps(cfg, indent=2))
             rc = stream([pys["analysis"], "-m", "pipeline.run_pipeline", rec],
                         env=env, cwd=REPO)
@@ -263,6 +320,9 @@ def main() -> int:
             shutil.copy2(xlsx, results_dir / xlsx.name)
             for png in plane0.glob("*baseline_qc.png"):
                 shutil.copy2(png, results_dir / png.name)
+            if (plane0 / "detection_settings.json").is_file():
+                shutil.copy2(plane0 / "detection_settings.json",
+                             results_dir / f"{rid}_detection_settings.json")
         summary.append((rid, status, time.time() - t0))
 
     # ── Summary ──

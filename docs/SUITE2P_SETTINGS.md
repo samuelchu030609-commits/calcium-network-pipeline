@@ -13,6 +13,13 @@ neurons), and your results won't be comparable to everyone else's.
 > of setting these by hand. Then only adjust `fs` and `tau` for your recording
 > (see below). The table is here so you understand *what* you're loading.
 
+> **Different cells or magnification?** The table below is the built-in detection
+> profile *Lippmann iNeurons, 10X* (12-pixel cells at 1.37 µm/pixel). For other cells,
+> make a detection profile in the GUI (cell size, cell-probability and shape thresholds,
+> detection image) and check it with the preview: see "Your cells: a detection profile"
+> in [HOW_TO_INSTALL.md](../HOW_TO_INSTALL.md). The pipeline then compares each
+> recording against the profile chosen for it rather than against this table.
+
 ## 1. Install Suite2p
 
 Follow the official Suite2p installation instructions (their GitHub project).

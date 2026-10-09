@@ -141,6 +141,43 @@ def _mann_whitney_p(a, b):
         return None
 
 
+def detection_of(xlsx_path) -> tuple[str, tuple | None]:
+    """(readable label, comparable signature) of the cell-detection settings a
+    workbook's recording was made with, or ("unknown", None).
+
+    Looks beside the workbook: in plane0 (detection_settings.json, else ops.npy), or,
+    for a copy in RESULTS/, at RESULTS/<id>_detection_settings.json and then the
+    recording's own plane0.
+    """
+    import json
+    p = Path(xlsx_path)
+    rid = p.name[:-len("_metrics.xlsx")] if p.name.endswith("_metrics.xlsx") else p.stem
+    if p.parent.name == "RESULTS":
+        jsons = [p.parent / f"{rid}_detection_settings.json",
+                 p.parent.parent / rid / "suite2p" / "plane0" / "detection_settings.json"]
+        plane0 = p.parent.parent / rid / "suite2p" / "plane0"
+    else:
+        jsons = [p.parent / "detection_settings.json"]
+        plane0 = p.parent
+    for j in jsons:
+        try:
+            d = json.loads(j.read_text(encoding="utf-8"))
+            sig = (round(float(d["diameter_px"]), 3), float(d["cellprob_threshold"]),
+                   float(d["flow_threshold"]), d["img"])
+            return str(d.get("profile") or "unnamed settings"), sig
+        except Exception:
+            continue
+    try:
+        import numpy as np
+        ops = np.load(plane0 / "ops.npy", allow_pickle=True).item()
+        cs = ops["detection"]["cellpose_settings"]
+        sig = (round(float(np.atleast_1d(ops["diameter"])[-1]), 3),
+               float(cs["cellprob_threshold"]), float(cs["flow_threshold"]), cs["img"])
+        return (f"{sig[0]:g} px, cellprob {sig[1]:g}, flow {sig[2]:g}, {sig[3]}", sig)
+    except Exception:
+        return "unknown", None
+
+
 def build_comparison(items: list, out_path) -> str:
     """Aggregate `items` (each {path, group, label}) into a comparison workbook."""
     if not items:
@@ -149,10 +186,15 @@ def build_comparison(items: list, out_path) -> str:
     # --- read every recording's Summary ---
     rows = []          # one dict per recording: label, group, + display->value
     event_sources = set()
+    detections = {}    # signature -> label
     for it in items:
         summ = read_summary(it["path"])
+        det_label, det_sig = detection_of(it["path"])
+        if det_sig is not None:
+            detections.setdefault(det_sig, det_label)
         rec = {"label": it.get("label") or _recording_name(it["path"]),
-               "group": str(it.get("group") or "ungrouped")}
+               "group": str(it.get("group") or "ungrouped"),
+               "detection": det_label}
         for section, metric, display, kind in SUMMARY_METRICS:
             raw = summ.get((section, metric))
             if kind in NUMERIC_KINDS:
@@ -172,17 +214,19 @@ def build_comparison(items: list, out_path) -> str:
     # methodological guard: event-based metrics are not comparable across event
     # sources (CASCADE calibrated spikes vs raw dF/F0). Flag it rather than hide it.
     mixed_sources = len(event_sources) > 1
+    # Same guard for cell detection: different settings find different cells.
+    mixed_detection = len(detections) > 1
 
     wb = openpyxl.Workbook()
 
     # ---- Sheet 1: Per recording (wide) ----
     ws = wb.active
     ws.title = "Per recording"
-    header = ["Recording", "Group"] + [d for _, _, d, _ in SUMMARY_METRICS]
+    header = ["Recording", "Group"] + [d for _, _, d, _ in SUMMARY_METRICS] + ["Cell detection"]
     ws.append(header)
     for r in rows:
         ws.append([r["label"], r["group"]] +
-                  [r.get(d) for _, _, d, _ in SUMMARY_METRICS])
+                  [r.get(d) for _, _, d, _ in SUMMARY_METRICS] + [r["detection"]])
 
     # ---- Sheet 2: By group (descriptive stats) ----
     wsg = wb.create_sheet("By group")
@@ -247,6 +291,15 @@ def build_comparison(items: list, out_path) -> str:
             ["   comparable between CASCADE (calibrated spikes) and dF/F0 (dye)."],
             ["   Compare like-with-like event sources."],
         ]
+    if mixed_detection:
+        notes += [
+            [""],
+            ["!! WARNING: these recordings were detected with DIFFERENT cell-detection settings:"],
+            *[["   " + lbl] for lbl in sorted(detections.values())],
+            ["   Different settings find different cells, so cell counts, % active and"],
+            ["   synchrony are NOT directly comparable. Analyse every recording of an"],
+            ["   experiment with the same detection profile."],
+        ]
     for line in notes:
         wsh.append(line)
 
@@ -269,14 +322,31 @@ def _guess_group(path) -> str:
 
 
 def _scan_workbooks(parent) -> list:
+    """Every recording's workbook under `parent`, each recording ONCE.
+
+    tools/analyze_folder.py keeps the original in <rec>/suite2p/plane0/ and a copy in
+    RESULTS/; counting both would double n. Set-aside earlier runs
+    (suite2p_previous_*) are not current results and are skipped.
+    """
     parent = Path(parent)
-    found = []
+    found = {}
     for root, dirs, files in os.walk(parent):
-        dirs[:] = [d for d in dirs if not d.startswith(".")]
+        dirs[:] = [d for d in dirs
+                   if not d.startswith(".") and not d.startswith("suite2p_previous")]
+        here = Path(root)
         for f in files:
+            if f.startswith("~$"):            # Excel's lock file while a workbook is open
+                continue
             if f.endswith("_metrics.xlsx") or (f.endswith(".xlsx") and "_metrics" in f):
-                found.append(Path(root) / f)
-    return sorted(set(found))
+                if here.name == "RESULTS":
+                    key, prefer = (here.parent, f), False
+                elif here.name == "plane0" and here.parent.name == "suite2p":
+                    key, prefer = (here.parent.parent.parent, f), True
+                else:
+                    key, prefer = (here, f), True
+                if key not in found or prefer:
+                    found[key] = here / f
+    return sorted(found.values())
 
 
 def main() -> None:

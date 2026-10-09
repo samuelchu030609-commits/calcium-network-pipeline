@@ -92,8 +92,11 @@ def _settings_equal(a, b, tol: float = 1e-6) -> bool:
         return a == b
 
 
-def check_detection_settings(plane0: str) -> None:
-    """Warn loudly if the recording's Suite2p detection settings differ from canonical."""
+def check_detection_settings(plane0: str, expected: dict | None = None,
+                             profile: str | None = None) -> None:
+    """Warn loudly if the recording's Suite2p detection settings differ from what they
+    should be: the chosen detection profile when config.json names one (written by
+    tools/analyze_folder.py), else the canonical lab settings."""
     import numpy as np
     if not os.path.exists(_CANON_SETTINGS):
         return  # canonical file not shipped in this checkout — skip silently
@@ -106,20 +109,38 @@ def check_detection_settings(plane0: str) -> None:
     except Exception as exc:  # never let the guard break a run
         print(f"[pipeline] note: could not compare detection settings ({exc})")
         return
+    if expected:
+        # The profile sets these; the rest of the recipe stays the canonical one.
+        canon = dict(canon)
+        for k in ("cellpose_model", "img", "cellprob_threshold", "flow_threshold"):
+            canon[k] = expected[k]
+        canon["diameter"] = (float(expected["diameter"]),) * 2
     diffs = {k: (canon[k], cur[k]) for k in _DETECTION_KEYS
              if not _settings_equal(canon[k], cur[k])}
     if not diffs:
-        print("[pipeline] detection settings match canonical (settings/pipeline_settings.npy)")
+        if expected:
+            print(f"[pipeline] detection settings match the chosen detection profile ({profile})")
+        else:
+            print("[pipeline] detection settings match canonical (settings/pipeline_settings.npy)")
         return
     bar = "!" * 78
     print(bar)
-    print("[pipeline] WARNING: Suite2p DETECTION settings differ from the canonical set.")
-    print("           ROI segmentation happened on your machine, NOT in this pipeline.")
-    print("           Differing detection settings change which cells are found, so your")
-    print("           numbers may NOT be comparable to the reference runs. Deviations:")
+    if expected:
+        print(f"[pipeline] WARNING: Suite2p DETECTION settings differ from the chosen detection")
+        print(f"           profile ({profile}). This recording's cells were found with other")
+        print("           settings, so its numbers may NOT be comparable to the other recordings")
+        print("           analysed with that profile. Deviations:")
+        label = "profile"
+    else:
+        print("[pipeline] WARNING: Suite2p DETECTION settings differ from the canonical set.")
+        print("           ROI segmentation happened on your machine, NOT in this pipeline.")
+        print("           Differing detection settings change which cells are found, so your")
+        print("           numbers may NOT be comparable to the reference runs. Deviations:")
+        label = "canonical"
     for k, (want, got) in diffs.items():
-        print(f"             {k}: canonical={want!r}  yours={got!r}")
-    print("           Canonical values: docs/SUITE2P_SETTINGS.md / settings/pipeline_settings.npy")
+        print(f"             {k}: {label}={want!r}  yours={got!r}")
+    if not expected:
+        print("           Canonical values: docs/SUITE2P_SETTINGS.md / settings/pipeline_settings.npy")
     print(bar)
 
 
@@ -143,7 +164,13 @@ def run(data_dir: str) -> str:
 
     print(f"[pipeline] {data_dir}")
     print(f"[pipeline] indicator={cfg.indicator}  fps={cfg.native_fps}  route={cfg.route}")
-    check_detection_settings(plane0)
+    try:
+        import json
+        with open(os.path.join(data_dir, "config.json"), encoding="utf-8") as fh:
+            raw = json.load(fh)
+    except Exception:
+        raw = {}
+    check_detection_settings(plane0, raw.get("detection_expected"), raw.get("detection_profile"))
 
     if cfg.uses_cascade:
         # --- stage 2: CASCADE (auto-resamples to the model rate internally) ---

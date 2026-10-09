@@ -15,7 +15,21 @@ context lives in the parent project's `CLAUDE.md`, not here.
   **scientific code**, VENDORED from the parent project (see sync boundary).
 - `tools/analyze_folder.py` — stages 1→2→3 over a folder of TIFs, each in its own env (found
   via `CNP_CONDA_BASE` or `sys.prefix`); copies workbooks to `<folder>/RESULTS/`. Repo-native glue.
-- `tools/batch_suite2p.py` (stage 1, mirrored from the parent), `tools/compare_plate.py`.
+- `tools/batch_suite2p.py` (stage 1, mirrored from the parent — keep byte-identical to the
+  lab copy), `tools/compare_plate.py`.
+- **Detection profiles** (`tools/detection_profiles.py`): built-in JSON in
+  `settings/detection_profiles/` (default "Lippmann iNeurons, 10X" = 12 **px**, kept in px on
+  purpose: 16.4 µm → 12.009 px, which would count as a different setting and force re-runs);
+  user profiles in `<install>/profiles/` (outside the code, so updates keep them). A profile →
+  batch_suite2p `--diameter|--diameter-um --cellprob-threshold --flow-threshold --img`.
+  batch_suite2p treats a finished recording as done only if its ops.npy detection matches
+  (else REDO + removes stale cascade/metrics files), writes `plane0/detection_settings.json`;
+  analyze_folder refuses stages 2–3 on mismatched detection and passes `detection_expected`
+  to the run_pipeline guard; run_group warns on mixed detection. Defaults reproduce the old
+  settings dict exactly (verified) and all lab plates dry-run as done.
+- `tools/preview_detection.py` (suite2p env): Suite2p's own `anatomical.select_rois` on a
+  meanImg/max_proj built like `detection_wrapper` (no registration, first N frames). On B05 its
+  images match Suite2p's (r = 1.0 mean, 0.994 max_proj).
 - `install/` — `install_windows.ps1` (must stay ASCII: PowerShell 5.1), `install_mac.sh`,
   `self_test.py`. Version pins live in BOTH installers AND `self_test.py` EXPECTED — change
   all three together. They equal the parent project's verified envs.
