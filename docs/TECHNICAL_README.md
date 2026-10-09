@@ -1,4 +1,4 @@
-# Calcium Network Pipeline — technical README
+# iNeuron-NetSync — technical README
 
 > **Just want to install and run it?** Follow [HOW_TO_INSTALL.md](../HOW_TO_INSTALL.md)
 > instead. This page is for people who want the methods and the moving parts.
@@ -191,7 +191,7 @@ It writes `<plate>/<plate>_plate_comparison.xlsx` and a `<plate>_graphs/` folder
 ## Repository layout
 
 ```
-calcium-network-pipeline/
+iNeuron-NetSync/
 ├── README.md                 ← short start page (links to HOW_TO_INSTALL.md)
 ├── HOW_TO_INSTALL.md         ← step-by-step install + first analysis
 ├── INSTALL_WINDOWS.bat / INSTALL_MAC.sh  ← one-click installers (code in install/)

@@ -1,4 +1,6 @@
-# Calcium Network Pipeline
+# iNeuron-NetSync
+
+*Network synchrony in iPSC-derived neurons (iNeurons), from calcium imaging.*
 
 Turns **calcium-imaging movies** of cultured neurons into **activity and network-synchrony
 numbers**, one Excel workbook per recording.
@@ -26,11 +28,11 @@ It walks you from nothing installed to your first results, on **Windows or Mac**
 programming or GitHub knowledge needed. In short:
 
 1. **Download** this pipeline as a ZIP file:
-   [calcium-network-pipeline-main.zip](https://github.com/samuelchu030609-commits/calcium-network-pipeline/archive/refs/heads/main.zip)
+   [iNeuron-NetSync-main.zip](https://github.com/samuelchu030609-commits/iNeuron-NetSync/archive/refs/heads/main.zip)
 2. **Install:** on Windows, double-click `INSTALL_WINDOWS.bat`; on a Mac, run
    `INSTALL_MAC.sh` (the guide shows how). No administrator password is needed. The
    installer checks itself at the end.
-3. **Analyse:** double-click **Calcium Pipeline** on your Desktop, pick your folder of
+3. **Analyse:** double-click **iNeuron-NetSync** on your Desktop, pick your folder of
    movies and the indicator, and press Start.
 
 ## More information

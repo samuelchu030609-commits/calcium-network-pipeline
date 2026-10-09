@@ -8,7 +8,7 @@ computer. It has four modes:
   background, so closing the browser does not stop it, and it collects every workbook
   in `<folder>/RESULTS/`. This mode needs the one-click install
   ([HOW_TO_INSTALL.md](../HOW_TO_INSTALL.md)) and must be opened from its
-  **Calcium Pipeline** Desktop launcher.
+  **iNeuron-NetSync** Desktop launcher.
 - **One Suite2p recording** / **Batch of Suite2p recordings** — stages 2–3 only, for
   folders that already contain Suite2p output (described below).
 - **Compare recordings** — pools finished workbooks into a group comparison.

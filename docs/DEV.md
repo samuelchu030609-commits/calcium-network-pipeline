@@ -65,7 +65,7 @@ them to git (see `.gitignore`).
 
 Build → tag → push to GHCR:
 ```
-docker build -f docker/Dockerfile -t ghcr.io/samuelchu030609-commits/calcium-network-pipeline:vX.Y .
-docker push ghcr.io/samuelchu030609-commits/calcium-network-pipeline:vX.Y
+docker build -f docker/Dockerfile -t ghcr.io/samuelchu030609-commits/ineuron-netsync:vX.Y .
+docker push ghcr.io/samuelchu030609-commits/ineuron-netsync:vX.Y
 ```
 Tag a matching GitHub release so the image version and the code version line up.

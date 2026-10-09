@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # ============================================================================
-# Calcium Network Pipeline - one-command installer for macOS
+# iNeuron-NetSync - one-command installer for macOS
 #
 # What it does (nothing outside the folders named here is touched; no password):
-#   1. Puts a private copy of Python ("Miniforge") in   ~/CalciumPipeline/conda
+#   1. Puts a private copy of Python ("Miniforge") in   ~/iNeuron-NetSync/conda
 #      - separate from any Python/conda you already have, so it cannot break them.
 #   2. Builds the four environments the pipeline needs, at the exact versions the
 #      reference numbers were produced with:
@@ -13,8 +13,8 @@
 #        gui       the point-and-click window
 #   3. Downloads CASCADE into ~/Cascade with its two jGCaMP8 models, and the
 #      Cellpose cell-detection model into ~/.cellpose.
-#   4. Copies the pipeline code to ~/CalciumPipeline/code.
-#   5. Puts a "Calcium Pipeline" launcher on your Desktop.
+#   4. Copies the pipeline code to ~/iNeuron-NetSync/code.
+#   5. Puts an "iNeuron-NetSync" launcher on your Desktop.
 #   6. Runs a self-test on built-in synthetic data and says PASSED or FAILED.
 #
 # Safe to run again: finished steps are skipped. Run it again after downloading a
@@ -25,7 +25,7 @@
 set -euo pipefail
 
 SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"      # the downloaded pipeline
-BASE="${CNP_BASE:-$HOME/CalciumPipeline}"
+BASE="${CNP_BASE:-$HOME/iNeuron-NetSync}"
 CONDA_HOME="$BASE/conda"
 CODE="$BASE/code"
 CASCADE_DIR="$HOME/Cascade"
@@ -43,7 +43,7 @@ warn() { printf '%s\n' "  ${cy}NOTE${c0}  $*"; }
 die()  { printf '\n%s\n' "  ${cr}STOPPED${c0} $*" >&2
          printf '%s\n' "  The full log is in: $LOG" >&2; exit 1; }
 
-echo "Calcium Network Pipeline installer - $(date)"
+echo "iNeuron-NetSync installer - $(date)"
 echo "Installing into: $BASE"
 
 # ---------------------------------------------------------------- 1. checks
@@ -170,24 +170,24 @@ if [ "$SRC" != "$CODE" ]; then
   ok "code copied to $CODE"
 fi
 
-LAUNCHER="$BASE/Calcium Pipeline.command"
+LAUNCHER="$BASE/iNeuron-NetSync.command"
 cat > "$LAUNCHER" <<EOF
 #!/bin/bash
-# Opens the Calcium Network Pipeline in your web browser.
+# Opens iNeuron-NetSync in your web browser.
 # Keep this window open while you work; closing it closes the program.
 export CNP_CONDA_BASE="$CONDA_HOME"
 export PYTHONUTF8=1
 export STREAMLIT_BROWSER_GATHER_USAGE_STATS=false
 mkdir -p "\$HOME/.streamlit"
 [ -f "\$HOME/.streamlit/credentials.toml" ] || printf '[general]\nemail = ""\n' > "\$HOME/.streamlit/credentials.toml"
-echo "Starting the Calcium Network Pipeline - your browser will open in a moment."
+echo "Starting iNeuron-NetSync - your browser will open in a moment."
 echo "Keep this window open while you use it. Close it when you are done."
 exec "$(env_py gui)" -m streamlit run "$CODE/gui/app.py" --server.address localhost --server.headless false --client.toolbarMode minimal
 EOF
 chmod +x "$LAUNCHER"
 if [ -d "$HOME/Desktop" ]; then
-  cp "$LAUNCHER" "$HOME/Desktop/Calcium Pipeline.command"
-  ok "launcher placed on the Desktop: \"Calcium Pipeline\""
+  cp "$LAUNCHER" "$HOME/Desktop/iNeuron-NetSync.command"
+  ok "launcher placed on the Desktop: \"iNeuron-NetSync\""
 else
   ok "launcher: $LAUNCHER"
 fi
@@ -199,7 +199,7 @@ if [ "${CNP_SKIP_SELFTEST:-}" = "1" ]; then      # used only by the automatic Gi
 fi
 if CNP_CONDA_BASE="$CONDA_HOME" PYTHONUTF8=1 "$(env_py analysis)" "$CODE/install/self_test.py"; then
   printf '\n%s\n' "${cg}${c1}INSTALLATION COMPLETE - self-test PASSED.${c0}"
-  echo "To start: double-click \"Calcium Pipeline\" on your Desktop."
+  echo "To start: double-click \"iNeuron-NetSync\" on your Desktop."
   echo "The guide (HOW_TO_INSTALL.md) explains what to do next."
 else
   die "The self-test FAILED (details above). Send the file $LOG to the pipeline's maintainers."

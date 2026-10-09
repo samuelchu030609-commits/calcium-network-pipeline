@@ -1,9 +1,9 @@
 # ============================================================================
-# Calcium Network Pipeline - one-click installer for Windows
+# iNeuron-NetSync - one-click installer for Windows
 #
 # Started by double-clicking INSTALL_WINDOWS.bat. No administrator password is
-# needed: everything goes into one folder (C:\CalciumPipeline, or
-# %USERPROFILE%\CalciumPipeline if that is not allowed) plus %USERPROFILE%\Cascade
+# needed: everything goes into one folder (C:\iNeuron-NetSync, or
+# %USERPROFILE%\iNeuron-NetSync if that is not allowed) plus %USERPROFILE%\Cascade
 # and %USERPROFILE%\.cellpose. Nothing else on the PC is changed.
 #
 # What it does:
@@ -13,7 +13,7 @@
 #      reference numbers were produced with (suite2p, cascade, analysis, gui).
 #   3. Downloads CASCADE with its two jGCaMP8 models, and the Cellpose model.
 #   4. Copies the pipeline code to <install>\code.
-#   5. Puts a "Calcium Pipeline" shortcut on the Desktop.
+#   5. Puts an "iNeuron-NetSync" shortcut on the Desktop.
 #   6. Runs a self-test on synthetic data and says PASSED or FAILED.
 #
 # Safe to run again: finished steps are skipped. Run it again after downloading a
@@ -56,10 +56,10 @@ function Test-Writable($dir) {
 }
 if ($env:CNP_BASE) {
     $Base = $env:CNP_BASE
-} elseif (Test-Writable 'C:\CalciumPipeline') {
-    $Base = 'C:\CalciumPipeline'
+} elseif (Test-Writable 'C:\iNeuron-NetSync') {
+    $Base = 'C:\iNeuron-NetSync'
 } else {
-    $Base = Join-Path $env:USERPROFILE 'CalciumPipeline'
+    $Base = Join-Path $env:USERPROFILE 'iNeuron-NetSync'
 }
 if (-not (Test-Writable $Base)) { Die "Cannot create the install folder $Base." }
 $CondaHome = Join-Path $Base 'conda'
@@ -67,7 +67,7 @@ $Code = Join-Path $Base 'code'
 $script:Log = Join-Path $Base 'install_log.txt'
 Start-Transcript -Path $script:Log -Append | Out-Null
 
-Write-Host "Calcium Network Pipeline installer - $(Get-Date)"
+Write-Host "iNeuron-NetSync installer - $(Get-Date)"
 Write-Host "Installing into: $Base"
 
 # ---------------------------------------------------------------- 1. checks
@@ -78,7 +78,7 @@ if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64' -or $env:PROCESSOR_ARCHITEW6432 -eq 
 }
 Ok "Windows $([Environment]::OSVersion.Version), 64-bit"
 if ($Base -match '[^\x21-\x7E]') {
-    Die "The install folder path ($Base) contains a space or an accented letter. Ask IT to allow creating C:\CalciumPipeline, or set CNP_BASE to a simple path."
+    Die "The install folder path ($Base) contains a space or an accented letter. Ask IT to allow creating C:\iNeuron-NetSync, or set CNP_BASE to a simple path."
 }
 $drive = (Get-Item $Base).PSDrive
 $freeGB = [math]::Floor($drive.Free / 1GB)
@@ -99,7 +99,7 @@ if (-not $online) {
 Ok 'internet connection works'
 $lp = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem' -ErrorAction SilentlyContinue).LongPathsEnabled
 if ($lp -ne 1 -and $Base.Length -gt 20) {
-    Note "Windows long paths are off and the install folder ($Base) is long. If installing TensorFlow fails with 'No such file or directory', ask IT to enable long paths or to allow C:\CalciumPipeline."
+    Note "Windows long paths are off and the install folder ($Base) is long. If installing TensorFlow fails with 'No such file or directory', ask IT to enable long paths or to allow C:\iNeuron-NetSync."
 }
 Note 'Antivirus software scans every file the installer writes. On some lab PCs that makes this take 1-3 hours. A step that seems stuck is usually still working - please leave the window open.'
 
@@ -210,12 +210,12 @@ if ((Resolve-Path $Src).Path -ne $Code) {
     Ok "code copied to $Code"
 }
 
-$launcher = Join-Path $Base 'Calcium Pipeline.bat'
+$launcher = Join-Path $Base 'iNeuron-NetSync.bat'
 $gui = EnvPy 'gui'
 @"
 @echo off
-title Calcium Network Pipeline
-REM Opens the Calcium Network Pipeline in your web browser.
+title iNeuron-NetSync
+REM Opens iNeuron-NetSync in your web browser.
 REM Keep this window open while you work; closing it closes the program.
 set "CNP_CONDA_BASE=$CondaHome"
 set PYTHONUTF8=1
@@ -225,7 +225,7 @@ if not exist "%USERPROFILE%\.streamlit\credentials.toml" (
   > "%USERPROFILE%\.streamlit\credentials.toml" echo [general]
   >> "%USERPROFILE%\.streamlit\credentials.toml" echo email = ""
 )
-echo Starting the Calcium Network Pipeline - your browser will open in a moment.
+echo Starting iNeuron-NetSync - your browser will open in a moment.
 echo Keep this window open while you use it. Close it when you are done.
 "$gui" -m streamlit run "$Code\gui\app.py" --server.address localhost --server.headless false --client.toolbarMode minimal
 pause
@@ -234,12 +234,12 @@ pause
 try {
     $desktop = [Environment]::GetFolderPath('Desktop')
     $ws = New-Object -ComObject WScript.Shell
-    $lnk = $ws.CreateShortcut((Join-Path $desktop 'Calcium Pipeline.lnk'))
+    $lnk = $ws.CreateShortcut((Join-Path $desktop 'iNeuron-NetSync.lnk'))
     $lnk.TargetPath = $launcher
     $lnk.WorkingDirectory = $Base
-    $lnk.Description = 'Calcium Network Pipeline'
+    $lnk.Description = 'iNeuron-NetSync'
     $lnk.Save()
-    Ok 'shortcut placed on the Desktop: "Calcium Pipeline"'
+    Ok 'shortcut placed on the Desktop: "iNeuron-NetSync"'
 } catch {
     Note "Could not make a Desktop shortcut. Start the program by double-clicking $launcher"
 }
@@ -254,6 +254,6 @@ if ($LASTEXITCODE -ne 0) {
 }
 Write-Host ''
 Write-Host 'INSTALLATION COMPLETE - self-test PASSED.' -ForegroundColor Green
-Write-Host 'To start: double-click "Calcium Pipeline" on your Desktop.'
+Write-Host 'To start: double-click "iNeuron-NetSync" on your Desktop.'
 try { Stop-Transcript | Out-Null } catch {}
 exit 0

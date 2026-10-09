@@ -1,4 +1,4 @@
-"""Calcium Network Pipeline — GUI.
+"""iNeuron-NetSync — GUI.
 
 A thin Streamlit front-end. It does NOT re-implement any analysis:
 
@@ -8,7 +8,7 @@ A thin Streamlit front-end. It does NOT re-implement any analysis:
     config.json needs (indicator, frame rate, route), write it, run
     pipeline/run_pipeline.py, stream its log, and show the friendly "Key Numbers".
 
-With the one-click install (install/), the "Calcium Pipeline" Desktop launcher
+With the one-click install (install/), the "iNeuron-NetSync" Desktop launcher
 starts this with CNP_CONDA_BASE set, and every stage runs in its own environment
 of that install. Otherwise launch it with gui/run_gui.sh or gui/run_gui.bat.
 """
@@ -25,7 +25,7 @@ import streamlit as st
 
 # ── Paths ──────────────────────────────────────────────────────────────────
 GUI_DIR = Path(__file__).resolve().parent
-REPO_ROOT = GUI_DIR.parent                      # calcium-network-pipeline/
+REPO_ROOT = GUI_DIR.parent                      # iNeuron-NetSync/
 SETTINGS_PATH = GUI_DIR / "settings.local.json"  # remembers how to run (git-ignored)
 
 # Make the `pipeline` package importable (raw_rate reader, run_group comparison).
@@ -71,7 +71,7 @@ def make_config(indicator_idx: int, fps: float, neuropil: float) -> dict:
     """Build the config.json dict for a recording (single source of the schema)."""
     sel = INDICATORS[indicator_idx]
     return {
-        "_comment": "Written by the Calcium Network Pipeline GUI.",
+        "_comment": "Written by the iNeuron-NetSync GUI.",
         "indicator": sel["indicator"],
         "native_fps": float(fps),
         "route": sel["route"],
@@ -245,7 +245,7 @@ def build_command(settings: dict, data_dir: Path) -> tuple[list[str], dict, str 
         return argv, env, str(REPO_ROOT), " ".join(argv)
 
     if mode == "docker":
-        image = settings.get("image", "ghcr.io/samuelchu030609-commits/calcium-network-pipeline:latest")
+        image = settings.get("image", "ghcr.io/samuelchu030609-commits/ineuron-netsync:latest")
         argv = ["docker", "run", "--rm", "-v", f"{data_dir}:/data", image, "/data"]
         return argv, env, None, " ".join(argv)
 
@@ -499,7 +499,7 @@ def tail(path: Path, n: int = 60) -> str:
 def tif_ui(settings: dict) -> None:
     if installed_base() is None:
         st.warning("This mode needs the one-click install (see HOW_TO_INSTALL.md) and must be "
-                   "started from the **Calcium Pipeline** launcher on the Desktop. "
+                   "started from the **iNeuron-NetSync** launcher on the Desktop. "
                    "Without it, run Suite2p yourself and use the other modes.")
         return
 
@@ -647,10 +647,10 @@ def finished_banner(folder: Path) -> None:
 
 
 # ── Page ───────────────────────────────────────────────────────────────────
-st.set_page_config(page_title="Calcium Network Pipeline", page_icon="🧠", layout="centered")
+st.set_page_config(page_title="iNeuron-NetSync", page_icon="🧠", layout="centered")
 settings = load_settings()
 
-st.title("🧠 Calcium Network Pipeline")
+st.title("🧠 iNeuron-NetSync")
 st.caption("From microscope movies to activity and network-synchrony numbers: "
            "Suite2p (cell detection) → CASCADE (spike inference) → network metrics.")
 
@@ -702,7 +702,7 @@ else:
         elif mode == "docker":
             settings["image"] = st.text_input(
                 "Docker image",
-                settings.get("image", "ghcr.io/samuelchu030609-commits/calcium-network-pipeline:latest"))
+                settings.get("image", "ghcr.io/samuelchu030609-commits/ineuron-netsync:latest"))
         else:  # direct
             settings["python_path"] = st.text_input(
                 "Python interpreter (must import numpy/scipy/pandas + TensorFlow for CASCADE)",

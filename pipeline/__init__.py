@@ -1,4 +1,4 @@
-"""Calcium network pipeline (stages 2–3: CASCADE + metrics)."""
+"""iNeuron-NetSync (stages 2–3: CASCADE + metrics)."""
 from .config import RecordingConfig, ConfigError, load_config, ROUTE_FAMILY
 
 __all__ = [
