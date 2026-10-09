@@ -1,0 +1,6 @@
+# Windows batch files must keep CRLF line endings, including in GitHub's "Download ZIP".
+# They are stored with CRLF already, so git must not touch them.
+*.bat -text
+# Shell scripts must keep LF or bash on macOS/Linux fails on the stray \r.
+*.sh text eol=lf
+*.command text eol=lf

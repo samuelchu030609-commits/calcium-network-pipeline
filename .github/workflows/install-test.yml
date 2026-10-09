@@ -1,0 +1,75 @@
+# Runs the real one-click installers on fresh GitHub-hosted Windows and macOS
+# machines, ending with install/self_test.py (all three stages on synthetic data).
+# This is the only automatic test of the Windows installer, so run it after any
+# change to install/, INSTALL_*.{bat,sh}, tools/analyze_folder.py or the pins.
+name: Installer test
+
+on:
+  workflow_dispatch:          # "Run workflow" button on the Actions tab
+  pull_request:
+    paths:
+      - "install/**"
+      - "INSTALL_WINDOWS.bat"
+      - "INSTALL_MAC.sh"
+      - "tools/analyze_folder.py"
+      - "tools/batch_suite2p.py"
+      - "pipeline/**"
+      - ".github/workflows/install-test.yml"
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - name: INSTALL_WINDOWS.bat must have Windows (CRLF) line endings
+        shell: pwsh
+        run: |
+          $raw = [IO.File]::ReadAllText("INSTALL_WINDOWS.bat")
+          if ($raw -notmatch "`r`n") { throw "INSTALL_WINDOWS.bat lost its CRLF line endings" }
+      - name: Run the installer exactly as a user would (double-click = cmd)
+        shell: cmd
+        run: INSTALL_WINDOWS.bat < NUL
+      - name: The installer must have finished and passed its self-test
+        shell: pwsh
+        run: |
+          $log = Get-Content C:\CalciumPipeline\install_log.txt -Raw
+          if ($log -notmatch "SELF-TEST PASSED") { Write-Output $log; throw "installer or self-test did not pass" }
+          if (-not (Test-Path "$env:USERPROFILE\Desktop\Calcium Pipeline.lnk")) { throw "no Desktop shortcut" }
+      - name: Upload the install log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-install-log
+          path: C:\CalciumPipeline\install_log.txt
+
+  macos:
+    runs-on: macos-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run the installer exactly as the guide says (self-test runs below)
+        run: CNP_SKIP_SELFTEST=1 bash INSTALL_MAC.sh
+      - name: Hide the runner's virtual GPU from Cellpose
+        # GitHub's macOS runners are virtual machines whose virtual GPU (MPS)
+        # returns no cells from Cellpose (0/25 on the self-test movie, while the
+        # CPU on the same runner finds 25/25, as does MPS on a real Apple Silicon
+        # Mac). Suite2p sends Cellpose to the GPU whenever one is reported, so on
+        # this runner only, report none. Real users' installs are not touched.
+        run: |
+          SP=$(~/CalciumPipeline/conda/envs/suite2p/bin/python -c "import site; print(site.getsitepackages()[0])")
+          # Cellpose decides "GPU or not" in cellpose.core._use_gpu_torch; answer "no".
+          printf 'import cellpose.core as _c\n_c._use_gpu_torch = lambda gpu_number=0: False\n' > "$SP/sitecustomize.py"
+          ~/CalciumPipeline/conda/envs/suite2p/bin/python -c "from cellpose import core; assert not core.use_gpu(); print('Cellpose will use the CPU')"
+      - name: Self-test
+        run: |
+          CNP_CONDA_BASE=~/CalciumPipeline/conda PYTHONUTF8=1 \
+            ~/CalciumPipeline/conda/envs/analysis/bin/python ~/CalciumPipeline/code/install/self_test.py \
+            2>&1 | tee -a ~/CalciumPipeline/install_log.txt
+          exit ${PIPESTATUS[0]}
+      - name: Upload the install log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-install-log
+          path: ~/CalciumPipeline/install_log.txt
