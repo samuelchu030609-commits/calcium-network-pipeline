@@ -5,5 +5,7 @@
   "cellprob_threshold": 0.0,
   "flow_threshold": 0.4,
   "image": "meanImg",
-  "notes": "The settings our reference results were made with: iPSC-derived cortical iNeurons with astrocytes, imaged at 10X (ImageXpress Micro, 1.37 µm per pixel), so 12 pixels is about 16 µm."
+  "min_cell_diameter_um": 8.0,
+  "um_per_px": null,
+  "notes": "The settings our reference results were made with: iPSC-derived cortical iNeurons with astrocytes, imaged at 10X (ImageXpress Micro, 1.37 µm per pixel), so 12 pixels is about 16 µm. Outlines at least 8 µm across count as cells."
 }

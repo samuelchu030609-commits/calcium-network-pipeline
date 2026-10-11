@@ -215,7 +215,8 @@ iNeuron-NetSync/
 │   ├── analyze_folder.py     ← stages 1→2→3 over a folder of TIFs (what the GUI runs)
 │   ├── detection_profiles.py ← named cell-detection settings (built-in + the lab's own)
 │   ├── preview_detection.py  ← quick detection preview on one recording
-│   ├── batch_suite2p.py      ← stage 1 over a folder of TIFs (joins split files)
+│   ├── batch_suite2p.py      ← stage 1 over a folder of TIFs (joins split files, drops dark final frames)
+│   ├── apply_cell_rule.py    ← stage 1b: cells = ROIs ≥ 8 µm across, not Suite2p's classifier
 │   └── compare_plate.py      ← one workbook comparing every well of a plate
 ├── tests/, examples/         ← unit tests; synthetic acceptance test
 ├── envs/{cascade,analysis,gui}.yml  ← for Docker / manual setups (installers pin their own)

@@ -8,8 +8,13 @@ It skips motion correction and uses only the first frames, so the cell count is
 close to, not identical with, what the full run finds; the outlines show whether
 the settings suit the cells.
 
-Writes an .npz with the image, the label image of detected cells and a summary,
-which the GUI draws. Run in the `suite2p` environment:
+Outlines smaller than the cell filter (--min-cell-um, default 8 um across; the same
+equal-area diameter tools/apply_cell_rule.py uses) are marked, because the full run
+will not count them as cells.
+
+Writes an .npz with the image, the label image of detected cells, which labels are
+below the cell filter, and a summary, which the GUI draws. Run in the `suite2p`
+environment:
 
     python tools/preview_detection.py movie.tif --out preview.npz --diameter 12
     python tools/preview_detection.py movie.tif --out preview.npz --diameter-um 16 --area small
@@ -26,6 +31,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from batch_suite2p import um_per_pixel, read_true_fps  # noqa: E402
+from apply_cell_rule import MIN_DIAMETER_UM  # noqa: E402
 
 AREAS = {"small": 256, "quarter": 512, "whole": None}
 
@@ -77,15 +83,22 @@ def main() -> int:
     ap.add_argument("--frames", type=int, default=600, help="How many frames to use.")
     ap.add_argument("--area", choices=sorted(AREAS), default="whole",
                     help="small = centre 256x256 px, quarter = centre 512x512, whole = all.")
+    ap.add_argument("--min-cell-um", type=float, default=MIN_DIAMETER_UM,
+                    help="Cell filter: outlines smaller than this (um across) are not cells.")
+    ap.add_argument("--um-per-px", type=float, default=None,
+                    help="Pixel size, used only when the TIF does not record one.")
     args = ap.parse_args()
 
     tif = Path(args.tif)
     t0 = time.time()
-    um_px = um_per_pixel(tif)
+    um_tif = um_per_pixel(tif)
+    # The fallback pixel size serves the cell filter only, as in the full run: a cell size
+    # in micrometres needs the file's own pixel size (batch_suite2p has no fallback).
+    um_px = um_tif or args.um_per_px
     if args.diameter_um is not None:
-        if not um_px:
+        if not um_tif:
             sys.exit("This TIF does not record its pixel size: give the cell size in pixels.")
-        diam = args.diameter_um / um_px
+        diam = args.diameter_um / um_tif
     else:
         diam = args.diameter
     fps = args.fps or read_true_fps([tif])[0]
@@ -116,10 +129,17 @@ def main() -> int:
     for i, s in enumerate(stats, 1):
         labels[s["ypix"], s["xpix"]] = i
         sizes.append(2 * np.sqrt(len(s["ypix"]) / np.pi))   # equal-area circle
+    # Label ids (1-based) the cell filter would drop; none when the pixel size is unknown.
+    sizes_um = np.array(sizes) * um_px if um_px else None
+    below = (np.flatnonzero(sizes_um < args.min_cell_um) + 1 if sizes_um is not None
+             else np.array([], int))
     shown = {"meanImg": mean_img, "max_proj": max_proj}.get(
         args.img, np.log(np.maximum(1e-3, max_proj / np.maximum(1e-3, mean_img))))
     summary = {
-        "n_cells": len(stats), "diameter_px": float(diam), "um_per_px": um_px,
+        "n_outlined": len(stats), "n_cells": len(stats) - len(below),
+        "n_below_filter": int(len(below)), "min_cell_um": args.min_cell_um,
+        "filter_applied": um_px is not None,
+        "diameter_px": float(diam), "um_per_px": um_px,
         "median_cell_px": float(np.median(sizes)) if sizes else None,
         "frames_used": int(n_used), "fps": float(fps), "area": args.area,
         "crop_origin": [int(y0), int(x0)], "shape": list(mean_img.shape),
@@ -128,7 +148,7 @@ def main() -> int:
                      "flow_threshold": args.flow_threshold, "img": args.img},
     }
     np.savez_compressed(args.out, image=shown.astype(np.float32), labels=labels,
-                        summary=json.dumps(summary))
+                        below=below.astype(np.int32), summary=json.dumps(summary))
     print(json.dumps(summary))
     return 0
 

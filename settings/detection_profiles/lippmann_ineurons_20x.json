@@ -1,0 +1,11 @@
+{
+  "name": "Lippmann iNeurons, 20X",
+  "cell_size": 24,
+  "cell_size_unit": "px",
+  "cellprob_threshold": 0.0,
+  "flow_threshold": 0.4,
+  "image": "meanImg",
+  "min_cell_diameter_um": 8.0,
+  "um_per_px": null,
+  "notes": "The same cells imaged with a 20X water-immersion objective (0.685 µm per pixel), so 24 pixels is again about 16 µm. Outlines at least 8 µm across count as cells. A 20X objective resolves more cells per mm² than 10X: never pool or directly compare 20X results with 10X ones."
+}

@@ -14,7 +14,14 @@ experiment, so every recording is detected the same way.
 A profile is a small JSON file:
     {"name": "...", "cell_size": 12, "cell_size_unit": "px" | "um",
      "cellprob_threshold": 0.0, "flow_threshold": 0.4, "image": "meanImg",
-     "notes": "..."}
+     "min_cell_diameter_um": 8.0, "um_per_px": null, "notes": "..."}
+
+The first five settings decide what Cellpose OUTLINES (stage 1). The last two decide
+which outlines COUNT AS CELLS (stage 1b, tools/apply_cell_rule.py): every outline at
+least min_cell_diameter_um across (the diameter of a circle of the same area), and
+nothing else -- Suite2p's own cell classifier is not used. um_per_px is needed only
+for TIFs that do not record their pixel size; a pixel size stored in the TIF always
+wins. Profiles saved before the cell filter existed load with the 8 um default.
 
 Pure standard library: used by the GUI and by analyze_folder.py in different
 environments.
@@ -37,7 +44,12 @@ IMAGES = {
 }
 # Allowed ranges: wide enough for any sensible use, narrow enough to catch typos.
 LIMITS = {"cell_size_px": (3.0, 200.0), "cell_size_um": (2.0, 300.0),
-          "cellprob_threshold": (-6.0, 6.0), "flow_threshold": (0.0, 3.0)}
+          "cellprob_threshold": (-6.0, 6.0), "flow_threshold": (0.0, 3.0),
+          "min_cell_diameter_um": (0.0, 100.0), "um_per_px": (0.01, 50.0)}
+# The cell filter of profiles saved before it existed, and of new ones. Validated for
+# iNeurons in the parent project: it removes debris and fragments while keeping 99.6% of
+# confirmed cells; 10 um starts to discard real ones.
+MIN_CELL_DEFAULT = 8.0
 
 
 def user_dir() -> Path | None:
@@ -73,7 +85,30 @@ def validate(p: dict) -> list[str]:
             errs.append(f"{label} must be a number.")
     if p.get("image") not in IMAGES:
         errs.append("Unknown detection image.")
+    try:
+        v = float(p.get("min_cell_diameter_um", MIN_CELL_DEFAULT))
+        lo, hi = LIMITS["min_cell_diameter_um"]
+        if not lo <= v <= hi:
+            errs.append(f"Smallest cell must be between {lo:g} and {hi:g} micrometres.")
+    except (TypeError, ValueError):
+        errs.append("Smallest cell must be a number.")
+    if p.get("um_per_px") not in (None, "", 0, 0.0):
+        try:
+            v = float(p["um_per_px"])
+            lo, hi = LIMITS["um_per_px"]
+            if not lo <= v <= hi:
+                errs.append(f"Pixel size must be between {lo:g} and {hi:g} micrometres.")
+        except (TypeError, ValueError):
+            errs.append("Pixel size must be a number (or left empty).")
     return errs
+
+
+def _normalise(p: dict) -> dict:
+    """Fill the cell-filter fields of older profiles; empty pixel size -> None."""
+    p["min_cell_diameter_um"] = float(p.get("min_cell_diameter_um", MIN_CELL_DEFAULT))
+    px = p.get("um_per_px")
+    p["um_per_px"] = float(px) if px not in (None, "", 0, 0.0) else None
+    return p
 
 
 def _read(path: Path, builtin: bool) -> dict | None:
@@ -83,6 +118,7 @@ def _read(path: Path, builtin: bool) -> dict | None:
         return None
     if validate(p):
         return None
+    _normalise(p)
     p["builtin"] = builtin
     p["path"] = str(path)
     return p
@@ -146,6 +182,9 @@ def save(p: dict, overwrite: bool = False) -> Path:
     clean["name"] = clean["name"].strip()
     for k in ("cell_size", "cellprob_threshold", "flow_threshold"):
         clean[k] = float(clean[k])
+    n = _normalise(dict(p))
+    clean["min_cell_diameter_um"] = n["min_cell_diameter_um"]
+    clean["um_per_px"] = n["um_per_px"]
     clean["notes"] = str(p.get("notes", "")).strip()
     path = ud / _filename(clean["name"])
     path.write_text(json.dumps(clean, indent=2), encoding="utf-8")
@@ -167,9 +206,19 @@ def stage1_args(p: dict) -> list[str]:
             "--img", p["image"], "--profile-name", p["name"]]
 
 
+def stage1b_args(p: dict) -> list[str]:
+    """The tools/apply_cell_rule.py options that apply this profile's cell filter.
+    (Its fallback pixel size is added by the caller only when the TIF has none.)"""
+    return ["--min-diameter-um", repr(float(p.get("min_cell_diameter_um", MIN_CELL_DEFAULT)))]
+
+
 def describe(p: dict) -> str:
     """One line a person can read."""
     unit = "µm" if p["cell_size_unit"] == "um" else "pixels"
+    floor = float(p.get("min_cell_diameter_um", MIN_CELL_DEFAULT))
+    px = p.get("um_per_px")
     return (f"cells about {float(p['cell_size']):g} {unit} across · cell-probability "
             f"threshold {float(p['cellprob_threshold']):g} · shape threshold "
-            f"{float(p['flow_threshold']):g} · {IMAGES[p['image']].split(' (')[0].lower()}")
+            f"{float(p['flow_threshold']):g} · {IMAGES[p['image']].split(' (')[0].lower()}"
+            f" · counts outlines at least {floor:g} µm across as cells"
+            + (f" · pixel size {float(px):g} µm if the file has none" if px else ""))

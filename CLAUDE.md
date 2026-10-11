@@ -15,11 +15,24 @@ context lives in the parent project's `CLAUDE.md`, not here.
   **scientific code**, VENDORED from the parent project (see sync boundary).
 - `tools/analyze_folder.py` — stages 1→2→3 over a folder of TIFs, each in its own env (found
   via `CNP_CONDA_BASE` or `sys.prefix`); copies workbooks to `<folder>/RESULTS/`. Repo-native glue.
-- `tools/batch_suite2p.py` (stage 1, mirrored from the parent — keep byte-identical to the
-  lab copy), `tools/compare_plate.py`.
+- `tools/batch_suite2p.py` (stage 1) and `tools/apply_cell_rule.py` (stage 1b), both
+  mirrored from the parent — keep them **byte-identical** to the lab copies (`cmp` them);
+  `tests/test_stage1b.py` is identical in both repos too. `tools/compare_plate.py`.
+- **Stage 1b — cells by size** (adopted in the parent 2026-10-10): every Suite2p ROI with
+  equivalent diameter ≥ the profile's `min_cell_diameter_um` (default 8) is a cell; Suite2p's
+  classifier is ignored (always on, at chance on iNeurons, skew-lookup off-by-one). Pixel size
+  from the TIF (MetaMorph `spatial-calibration-x`), else the profile's `um_per_px` fallback
+  (analyze_folder retries with it only on a missing-calibration error), else a hard failure —
+  never guessed. Writes `iscell_suite2p.npy` (backup), `cell_rule.json`; moves now-stale
+  CASCADE output to `_stale_pre_cell_rule/`. analyze_folder runs it per recording after
+  stage 1 and redoes stages 2–3 when `cell_rule.json` is newer than the workbook. The
+  Suite2p-output GUI modes do NOT apply it (they take the user's `iscell.npy` as given).
+- **Dark final frames**: batch_suite2p drops ≤5 trailing frames after an abrupt drop
+  (`find_dark_tail`), via a trimmed scratch copy; record in `plane0/frame_trim.json`.
 - **Detection profiles** (`tools/detection_profiles.py`): built-in JSON in
   `settings/detection_profiles/` (default "Lippmann iNeurons, 10X" = 12 **px**, kept in px on
-  purpose: 16.4 µm → 12.009 px, which would count as a different setting and force re-runs);
+  purpose: 16.4 µm → 12.009 px, which would count as a different setting and force re-runs;
+  "Lippmann iNeurons, 20X" = 24 px at 0.685 µm/px — never pool 10X with 20X);
   user profiles in `<install>/profiles/` (outside the code, so updates keep them). A profile →
   batch_suite2p `--diameter|--diameter-um --cellprob-threshold --flow-threshold --img`.
   batch_suite2p treats a finished recording as done only if its ops.npy detection matches

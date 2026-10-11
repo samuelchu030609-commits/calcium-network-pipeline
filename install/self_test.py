@@ -77,7 +77,13 @@ for cy, cx in centers:
     trace = 1.0 + 1.5 * np.convolve(spikes, kernel)[:T]
     movie += 250.0 * shape[None] * trace[:, None, None]
 movie += rng.normal(0, 8, movie.shape)
-tifffile.imwrite(sys.argv[1], np.clip(movie, 0, 65535).astype(np.uint16))
+# The pixel size MetaMorph stores (10X: 1.3656 um/px), which stage 1b needs to measure
+# cells in micrometres: the 12 px somata are then ~16 um across, above the 8 um filter.
+desc = ('<MetaData><prop id="spatial-calibration-x" type="float" value="1.3656"/>'
+        '<prop id="spatial-calibration-y" type="float" value="1.3656"/>'
+        '<prop id="spatial-calibration-units" type="string" value="um"/>'
+        '<prop id="spatial-calibration-state" type="bool" value="on"/></MetaData>')
+tifffile.imwrite(sys.argv[1], np.clip(movie, 0, 65535).astype(np.uint16), description=desc)
 """
 
 
@@ -167,10 +173,18 @@ def check_full(base: Path, tmp: Path) -> bool:
     log = r.stdout + r.stderr
     (tmp / "full_log.txt").write_text(log, encoding="utf-8")
     cells = re.search(r"-> \S+: (\d+)/(\d+) cells", log)
-    n_cells = int(cells.group(1)) if cells else 0
+    n_rois = int(cells.group(2)) if cells else 0
+    import json
+    rule_files = list((folder / "RESULTS").glob("*_cell_rule.json"))
+    try:
+        n_rule = json.loads(rule_files[0].read_text())["n_cells"] if rule_files else 0
+    except Exception:
+        n_rule = 0
     checks = [
-        ("Suite2p ran and detected cells" + (f" ({n_cells} found, 25 planted)" if cells else ""),
-         n_cells > 0),
+        ("Suite2p ran and outlined cells" + (f" ({n_rois} found, 25 planted)" if cells else ""),
+         n_rois > 0),
+        ("cells chosen by size (stage 1b)" + (f": {n_rule} of {n_rois}" if rule_files else ""),
+         n_rule > 0),
         ("CASCADE + metrics produced a workbook", any((folder / "RESULTS").glob("*_metrics.xlsx"))),
         ("run finished without errors", r.returncode == 0),
     ]

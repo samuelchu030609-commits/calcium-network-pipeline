@@ -509,11 +509,13 @@ def preview_candidates(folder: Path) -> list[Path]:
 
 
 def preview_image(npz_path: str, target_px: float):
-    """RGB picture: the detection image in grey, detected cells outlined in orange,
-    and a cyan reference circle of the chosen cell size in the top-left corner."""
+    """RGB picture: the detection image in grey, cells outlined in orange, outlines
+    below the cell filter in blue, and a cyan reference circle of the chosen cell
+    size in the top-left corner."""
     import numpy as np
     d = np.load(npz_path)
     img, lab = d["image"].astype(np.float64), d["labels"]
+    below = d["below"] if "below" in d.files else np.array([], int)
     lo, hi = np.percentile(img, [1, 99.5])
     g = np.clip((img - lo) / max(hi - lo, 1e-9), 0, 1)
     rgb = (np.stack([g, g, g], axis=-1) * 255).astype(np.uint8)
@@ -522,6 +524,8 @@ def preview_image(npz_path: str, target_px: float):
         for sh in (1, -1):
             edge |= (lab != np.roll(lab, sh, axis=ax)) & (lab > 0)
     rgb[edge] = (255, 140, 0)
+    if below.size:
+        rgb[edge & np.isin(lab, below)] = (60, 120, 255)
     r = max(1.0, target_px / 2)
     cy = cx = int(r) + 6
     yy, xx = np.ogrid[:lab.shape[0], :lab.shape[1]]
@@ -553,6 +557,8 @@ def _draft_profile() -> dict:
     return {"name": ss.get("pe_name", ""), "cell_size": ss.get("pe_size"),
             "cell_size_unit": ss.get("pe_unit"), "cellprob_threshold": ss.get("pe_cellprob"),
             "flow_threshold": ss.get("pe_flow"), "image": ss.get("pe_img"),
+            "min_cell_diameter_um": ss.get("pe_mincell"),
+            "um_per_px": ss.get("pe_umpx") or None,
             "notes": ss.get("pe_notes", "")}
 
 
@@ -607,6 +613,8 @@ def detection_ui(folder: Path) -> dict | None:
                 "pe_cellprob": float(prof["cellprob_threshold"]),
                 "pe_flow": float(prof["flow_threshold"]),
                 "pe_img": prof["image"],
+                "pe_mincell": float(prof["min_cell_diameter_um"]),
+                "pe_umpx": float(prof["um_per_px"] or 0.0),
                 "pe_notes": "" if prof["builtin"] else prof.get("notes", ""),
             })
             # (A shown preview stays; it is flagged if the settings no longer match it.)
@@ -633,6 +641,24 @@ def detection_ui(folder: Path) -> dict | None:
                  "well-formed cell shapes. 0.4 is Cellpose's standard value.")
         img = st.radio("Find cells in", list(detection_profiles.IMAGES), key="pe_img",
                        format_func=lambda k: detection_profiles.IMAGES[k])
+        f1, f2 = st.columns(2)
+        with f1:
+            mincell = st.number_input(
+                "Smallest cell (micrometres across)", key="pe_mincell",
+                min_value=0.0, max_value=100.0, step=0.5,
+                help="Outlines smaller than this are not counted as cells (debris, "
+                     "fragments, out-of-focus specks). Measured as the diameter of a circle "
+                     "with the outline's area. 8 suits iNeurons; 0 counts every outline. "
+                     "Suite2p's own cell classifier is not used.")
+        with f2:
+            umpx = st.number_input(
+                "Pixel size (µm per pixel) — only if your files lack it", key="pe_umpx",
+                min_value=0.0, max_value=50.0, step=0.01, format="%.4f",
+                help="Needed to measure cells in micrometres. MetaMorph TIFs store it and "
+                     "it is then always taken from the file. Leave at 0 unless the analysis "
+                     "says your files do not record it; then enter the value for your "
+                     "objective and camera (from the microscope software or a stage "
+                     "micrometer).")
 
         st.markdown("**2. Preview** on one recording, then adjust and preview again")
         cands = preview_candidates(folder)
@@ -654,7 +680,9 @@ def detection_ui(folder: Path) -> dict | None:
                         "--out", out, "--area", area,
                         "--diameter-um" if unit == "um" else "--diameter", str(size),
                         "--cellprob-threshold", str(cellprob), "--flow-threshold", str(flow),
-                        "--img", img]
+                        "--img", img, "--min-cell-um", str(mincell)]
+                if umpx:
+                    argv += ["--um-per-px", str(umpx)]
                 fps_override = st.session_state.get("tif_fps_override")
                 if fps_override:
                     argv += ["--fps", str(fps_override)]
@@ -664,23 +692,37 @@ def detection_ui(folder: Path) -> dict | None:
                 if r.returncode == 0 and Path(out).is_file():
                     st.session_state["pe_preview"] = {
                         "npz": out, "summary": json.loads(r.stdout.strip().splitlines()[-1]),
-                        "settings": (size, unit, cellprob, flow, img, str(rec), area)}
+                        "settings": (size, unit, cellprob, flow, img, mincell, umpx,
+                                     str(rec), area)}
                 else:
                     st.session_state.pop("pe_preview", None)
                     st.error("The preview did not work:\n\n" + (r.stdout + r.stderr)[-1500:])
             pv = st.session_state.get("pe_preview")
             if pv:
                 sm = pv["summary"]
-                stale = pv["settings"] != (size, unit, cellprob, flow, img, str(rec), area)
+                stale = pv["settings"] != (size, unit, cellprob, flow, img, mincell, umpx,
+                                           str(rec), area)
                 st.image(preview_image(pv["npz"], sm["diameter_px"]), use_container_width=True,
-                         caption=("Orange = detected cells. Cyan circle (top left) = the cell "
-                                  "size you entered. Grey = the image cells are found in."))
+                         caption=("Orange = cells. Blue = outlines smaller than the "
+                                  "smallest-cell size, which are not counted. Cyan circle (top "
+                                  "left) = the cell size you entered. Grey = the image cells "
+                                  "are found in."))
                 conv = (f" ({sm['diameter_px'] * sm['um_per_px']:.1f} µm)" if sm.get("um_per_px")
                         else "")
+                n_out = sm.get("n_outlined", sm["n_cells"])
+                if sm.get("filter_applied", False):
+                    counted = (f"**{sm['n_cells']} cells** in this area ({n_out} outlined, "
+                               f"{sm['n_below_filter']} smaller than {sm['min_cell_um']:g} µm). ")
+                else:
+                    counted = (f"**{n_out} objects outlined** in this area. ")
                 st.markdown(
-                    f"**{sm['n_cells']} objects outlined** in this area. Cell size used: "
+                    counted + f"Cell size used: "
                     f"{sm['diameter_px']:.1f} pixels{conv}; the outlined objects are typically "
                     f"{(sm['median_cell_px'] or 0):.1f} pixels across.")
+                if not sm.get("filter_applied", True):
+                    st.warning("This file does not record its pixel size, so the smallest-cell "
+                               "filter cannot be shown, and the full analysis will stop at this "
+                               "recording. Enter the pixel size above.")
                 st.caption("A preview, not the final result: it skips motion correction and uses "
                            f"the first {sm['frames_used']} frames. The full analysis then removes "
                            "some objects (overlapping, too small or too large), so it reports "

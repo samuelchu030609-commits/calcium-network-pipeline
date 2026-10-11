@@ -2,6 +2,8 @@
 """All three stages over a folder of microscope TIFs, in one go.
 
     stage 1  Suite2p   (tools/batch_suite2p.py, in the `suite2p` env)
+    stage 1b cells     (tools/apply_cell_rule.py, `suite2p` env): outlines at least the
+                       profile's minimum size across are the cells, not Suite2p's classifier
     stage 2  CASCADE   (pipeline.run_cascade,   in the `cascade` env)  - GCaMP only
     stage 3  metrics   (pipeline.run_pipeline,  in the `analysis` env)
 
@@ -14,10 +16,14 @@ For a folder <F> holding <name>.tif files it leaves:
     <F>/<ID>/suite2p/plane0/...           every stage's full output, as before
     <F>/RESULTS/<ID>_metrics.xlsx         a copy of each workbook, all in one place
     <F>/RESULTS/<ID>_baseline_qc.png      and its baseline-QC figure
+    <F>/RESULTS/<ID>_cell_rule.json       which outlines were counted as cells, and why
     <F>/RESULTS/run_log_<time>.txt        this run's full log
 
-Resumable: stage 1 skips recordings that already have Suite2p output, and
-stages 2-3 skip recordings whose workbook already exists (use --force to redo).
+Resumable: stage 1 skips recordings that already have Suite2p output, stage 1b
+changes nothing once applied, and stages 2-3 skip recordings whose workbook already
+exists and is newer than the cell list (use --force to redo). When stage 1b changes a
+recording's cell list (first run after an update, or a new minimum size), its stages
+2-3 are redone automatically: the old workbook describes other cells.
 One recording failing does not stop the others.
 
 Usage (any Python of the install; the GUI uses its own):
@@ -113,6 +119,39 @@ def stream(argv, env=None, cwd=None) -> int:
             continue
         print(line.rstrip("\n"), flush=True)
     return proc.wait()
+
+
+def choose_cells(py: Path, plane0: Path, profile: dict) -> str | None:
+    """Stage 1b on one recording. None when it worked, else the reason it did not.
+
+    The pixel size comes from the TIF. Only when the TIF does not record one is the
+    profile's fallback pixel size used -- never instead of the file's own."""
+    argv = [str(a) for a in (py, REPO / "tools" / "apply_cell_rule.py", plane0,
+                             *detection_profiles.stage1b_args(profile))]
+    r = subprocess.run(argv, capture_output=True, text=True, encoding="utf-8",
+                       errors="replace")
+    text = r.stdout + r.stderr
+    no_cal = "spatial-calibration" in text or "spatial calibration" in text
+    if r.returncode == 0 or not (no_cal and profile.get("um_per_px")):
+        print(text.rstrip("\n"), flush=True)     # the fallback's first try stays silent
+    if r.returncode == 0:
+        return None
+    if no_cal and profile.get("um_per_px"):
+        print(f"   This file does not record its pixel size: using the profile's "
+              f"{profile['um_per_px']:g} µm per pixel.", flush=True)
+        if stream(argv + ["--um-per-px", repr(float(profile["um_per_px"]))]) == 0:
+            return None
+        return "cells could not be chosen by size (see above)"
+    if no_cal:
+        return ("this file does not record its pixel size, so cell sizes in micrometres "
+                "cannot be measured. Enter the pixel size in the detection profile.")
+    return "cells could not be chosen by size (see above)"
+
+
+def is_stale(xlsx: Path, plane0: Path) -> bool:
+    """The workbook predates the current cell list (stage 1b changed it since)."""
+    rule = plane0 / "cell_rule.json"
+    return xlsx.is_file() and rule.is_file() and rule.stat().st_mtime > xlsx.stat().st_mtime
 
 
 def read_fps(plane0: Path) -> float | None:
@@ -284,13 +323,24 @@ def main() -> int:
             print(f"!! {why}", flush=True)
             summary.append((rid, "SKIPPED: detected with other settings", 0))
             continue
-        if xlsx.is_file() and not args.force:
+        print(f"-- stage 1b: which outlines are cells (at least "
+              f"{float(profile['min_cell_diameter_um']):g} µm across)", flush=True)
+        why = choose_cells(pys["suite2p"], plane0, profile)
+        if why:
+            print(f"!! {why}", flush=True)
+            summary.append((rid, "FAILED: cells not chosen (stage 1b)", time.time() - t0))
+            continue
+        stale = is_stale(xlsx, plane0)
+        if stale:
+            print("-- the cell list changed since this recording was analysed: "
+                  "redoing stages 2-3", flush=True)
+        if xlsx.is_file() and not args.force and not stale:
             print("already analysed - skipped (use --force to redo)")
             status = "ok (already done)"
         else:
             # Copies from an earlier run must not outlive this one.
             for old in (f"{rid}_metrics.xlsx", f"{rid}_metrics_baseline_qc.png",
-                        f"{rid}_detection_settings.json"):
+                        f"{rid}_detection_settings.json", f"{rid}_cell_rule.json"):
                 (results_dir / old).unlink(missing_ok=True)
             fps = read_fps(plane0)
             if not fps:
@@ -320,9 +370,9 @@ def main() -> int:
             shutil.copy2(xlsx, results_dir / xlsx.name)
             for png in plane0.glob("*baseline_qc.png"):
                 shutil.copy2(png, results_dir / png.name)
-            if (plane0 / "detection_settings.json").is_file():
-                shutil.copy2(plane0 / "detection_settings.json",
-                             results_dir / f"{rid}_detection_settings.json")
+            for rec_file in ("detection_settings.json", "cell_rule.json"):
+                if (plane0 / rec_file).is_file():
+                    shutil.copy2(plane0 / rec_file, results_dir / f"{rid}_{rec_file}")
         summary.append((rid, status, time.time() - t0))
 
     # ── Summary ──
