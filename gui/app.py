@@ -32,6 +32,9 @@ SETTINGS_PATH = GUI_DIR / "settings.local.json"  # remembers how to run (git-ign
 import sys as _sys
 if str(REPO_ROOT) not in _sys.path:
     _sys.path.insert(0, str(REPO_ROOT))
+if str(REPO_ROOT / "tools") not in _sys.path:
+    _sys.path.insert(0, str(REPO_ROOT / "tools"))
+import detection_profiles  # noqa: E402
 try:
     from pipeline.raw_rate import rate_from_raw
 except Exception:  # keep the GUI usable even if the optional reader can't import
@@ -426,10 +429,10 @@ def run_state(folder: Path) -> dict | None:
         return None
 
 
-def analyze_argv(folder: Path, ind_idx: int, *, dry_run=False, force=False,
+def analyze_argv(folder: Path, ind_idx: int, profile: str, *, dry_run=False, force=False,
                  delete_bin=False, fps=None) -> list[str]:
     argv = [str(installed_python("analysis")), str(REPO_ROOT / "tools" / "analyze_folder.py"),
-            str(folder), "--indicator", ANALYZE_KEYS[ind_idx]]
+            str(folder), "--indicator", ANALYZE_KEYS[ind_idx], "--profile", profile]
     if dry_run:
         argv.append("--dry-run")
     if force:
@@ -496,6 +499,262 @@ def tail(path: Path, n: int = 60) -> str:
     return "\n".join(lines[-n:])
 
 
+def preview_candidates(folder: Path) -> list[Path]:
+    """One .tif per recording (the first part of split recordings) for the preview."""
+    import re
+    return sorted(p for p in folder.iterdir()
+                  if p.is_file() and p.suffix.lower() in (".tif", ".tiff")
+                  and not p.name.startswith("._")
+                  and not re.search(r"-file\d+$", p.stem, re.IGNORECASE))
+
+
+def preview_image(npz_path: str, target_px: float):
+    """RGB picture: the detection image in grey, cells outlined in orange, outlines
+    below the cell filter in blue, and a cyan reference circle of the chosen cell
+    size in the top-left corner."""
+    import numpy as np
+    d = np.load(npz_path)
+    img, lab = d["image"].astype(np.float64), d["labels"]
+    below = d["below"] if "below" in d.files else np.array([], int)
+    lo, hi = np.percentile(img, [1, 99.5])
+    g = np.clip((img - lo) / max(hi - lo, 1e-9), 0, 1)
+    rgb = (np.stack([g, g, g], axis=-1) * 255).astype(np.uint8)
+    edge = np.zeros(lab.shape, bool)
+    for ax in (0, 1):
+        for sh in (1, -1):
+            edge |= (lab != np.roll(lab, sh, axis=ax)) & (lab > 0)
+    rgb[edge] = (255, 140, 0)
+    if below.size:
+        rgb[edge & np.isin(lab, below)] = (60, 120, 255)
+    r = max(1.0, target_px / 2)
+    cy = cx = int(r) + 6
+    yy, xx = np.ogrid[:lab.shape[0], :lab.shape[1]]
+    ring = np.abs(np.hypot(yy - cy, xx - cx) - r) < 0.7
+    rgb[ring] = (0, 220, 255)
+    scale = max(1, 768 // max(lab.shape))
+    if scale > 1:
+        rgb = rgb.repeat(scale, axis=0).repeat(scale, axis=1)
+    return rgb
+
+
+PREVIEW_AREAS = {
+    "small": "Small centre area (256 × 256 pixels)",
+    "quarter": "Centre quarter (512 × 512 pixels)",
+    "whole": "Whole image",
+}
+
+
+def preview_time(area: str) -> str:
+    if _sys.platform == "darwin":
+        return {"small": "about 20 seconds", "quarter": "under a minute",
+                "whole": "1-2 minutes"}[area]
+    return {"small": "about 3 minutes", "quarter": "about 10 minutes",
+            "whole": "about 40 minutes"}[area]
+
+
+def _draft_profile() -> dict:
+    ss = st.session_state
+    return {"name": ss.get("pe_name", ""), "cell_size": ss.get("pe_size"),
+            "cell_size_unit": ss.get("pe_unit"), "cellprob_threshold": ss.get("pe_cellprob"),
+            "flow_threshold": ss.get("pe_flow"), "image": ss.get("pe_img"),
+            "min_cell_diameter_um": ss.get("pe_mincell"),
+            "um_per_px": ss.get("pe_umpx") or None,
+            "notes": ss.get("pe_notes", "")}
+
+
+# Button callbacks run before the page is redrawn, the only moment Streamlit lets
+# them change which profile the selectbox shows.
+def _save_profile_cb(overwrite: bool) -> None:
+    draft = _draft_profile()
+    try:
+        detection_profiles.save(draft, overwrite=overwrite)
+    except ValueError as e:
+        st.session_state["pe_error"] = str(e)
+        return
+    st.session_state["tif_profile"] = draft["name"].strip()
+    st.session_state["pe_loaded"] = None          # refill the editor from what was saved
+
+
+def _delete_profile_cb(prof: dict) -> None:
+    try:
+        detection_profiles.delete(prof)
+    except (ValueError, OSError) as e:
+        st.session_state["pe_error"] = str(e)
+        return
+    st.session_state["tif_profile"] = detection_profiles.DEFAULT_NAME
+    st.session_state.pop("pe_del_sure", None)
+
+
+def detection_ui(folder: Path) -> dict | None:
+    """Step 3: choose (and optionally create, edit and preview) a detection profile."""
+    st.subheader("3 · How should cells be found?")
+    st.caption("A **detection profile** is a saved set of cell-detection settings for one "
+               "cell line and microscope. Use the same profile for every recording of an "
+               "experiment, so all of them are detected the same way.")
+    profiles = detection_profiles.load_all()
+    names = [p["name"] for p in profiles]
+    if st.session_state.get("tif_profile") not in names:
+        st.session_state["tif_profile"] = detection_profiles.DEFAULT_NAME
+    chosen = st.selectbox("Detection profile", names, key="tif_profile",
+                          format_func=lambda n: n + ("  (built-in)" if next(
+                              p for p in profiles if p["name"] == n)["builtin"] else ""))
+    prof = next(p for p in profiles if p["name"] == chosen)
+    st.caption(detection_profiles.describe(prof)
+               + (f"  \n{prof['notes']}" if prof.get("notes") else ""))
+
+    with st.expander("✏️ Make a profile for your cells, and preview it on one recording"):
+        # Re-fill the editor whenever another profile is chosen.
+        if st.session_state.get("pe_loaded") != chosen:
+            st.session_state.update({
+                "pe_loaded": chosen,
+                "pe_name": "" if prof["builtin"] else prof["name"],
+                "pe_size": float(prof["cell_size"]),
+                "pe_unit": prof["cell_size_unit"],
+                "pe_cellprob": float(prof["cellprob_threshold"]),
+                "pe_flow": float(prof["flow_threshold"]),
+                "pe_img": prof["image"],
+                "pe_mincell": float(prof["min_cell_diameter_um"]),
+                "pe_umpx": float(prof["um_per_px"] or 0.0),
+                "pe_notes": "" if prof["builtin"] else prof.get("notes", ""),
+            })
+            # (A shown preview stays; it is flagged if the settings no longer match it.)
+        st.markdown("**1. Adjust the settings** (they start from the profile chosen above)")
+        c1, c2 = st.columns([2, 1])
+        with c2:
+            unit = st.radio("Cell size in", ["um", "px"], key="pe_unit", horizontal=True,
+                            format_func=lambda u: "micrometres" if u == "um" else "pixels")
+        with c1:
+            size = st.number_input(
+                "Cell size: typical diameter of one cell body", key="pe_size",
+                min_value=2.0, max_value=300.0, step=0.5,
+                help="The most important setting. In micrometres, the program converts it "
+                     "to pixels for each file, using the pixel size the microscope stored "
+                     "in it (MetaMorph TIFs). Use pixels if your files do not record it.")
+        cellprob = st.slider(
+            "Cell-probability threshold", min_value=-6.0, max_value=6.0, step=0.5,
+            key="pe_cellprob",
+            help="Lower = more cells, including faint ones (but also more false ones). "
+                 "Higher = fewer, clearer cells. 0 is Cellpose's standard value.")
+        flow = st.slider(
+            "Shape threshold", min_value=0.0, max_value=3.0, step=0.1, key="pe_flow",
+            help="Higher = keeps more irregularly shaped objects. Lower = stricter, only "
+                 "well-formed cell shapes. 0.4 is Cellpose's standard value.")
+        img = st.radio("Find cells in", list(detection_profiles.IMAGES), key="pe_img",
+                       format_func=lambda k: detection_profiles.IMAGES[k])
+        f1, f2 = st.columns(2)
+        with f1:
+            mincell = st.number_input(
+                "Smallest cell (micrometres across)", key="pe_mincell",
+                min_value=0.0, max_value=100.0, step=0.5,
+                help="Outlines smaller than this are not counted as cells (debris, "
+                     "fragments, out-of-focus specks). Measured as the diameter of a circle "
+                     "with the outline's area. 8 suits iNeurons; 0 counts every outline. "
+                     "Suite2p's own cell classifier is not used.")
+        with f2:
+            umpx = st.number_input(
+                "Pixel size (µm per pixel) — only if your files lack it", key="pe_umpx",
+                min_value=0.0, max_value=50.0, step=0.01, format="%.4f",
+                help="Needed to measure cells in micrometres. MetaMorph TIFs store it and "
+                     "it is then always taken from the file. Leave at 0 unless the analysis "
+                     "says your files do not record it; then enter the value for your "
+                     "objective and camera (from the microscope software or a stage "
+                     "micrometer).")
+
+        st.markdown("**2. Preview** on one recording, then adjust and preview again")
+        cands = preview_candidates(folder)
+        if not cands:
+            st.info("No .tif files in this folder to preview on.")
+        else:
+            pc1, pc2 = st.columns([3, 2])
+            with pc1:
+                rec = st.selectbox("Recording", cands, format_func=lambda p: p.name, key="pe_rec")
+            with pc2:
+                area = st.selectbox("Area", list(PREVIEW_AREAS), key="pe_area",
+                                    index=2 if _sys.platform == "darwin" else 0,
+                                    format_func=lambda a: f"{PREVIEW_AREAS[a]} — {preview_time(a)}")
+            if st.button("🔍 Preview cell detection"):
+                import tempfile
+                out = str(Path(tempfile.gettempdir()) / f"cnp_preview_{os.getpid()}.npz")
+                argv = [str(installed_python("suite2p")),
+                        str(REPO_ROOT / "tools" / "preview_detection.py"), str(rec),
+                        "--out", out, "--area", area,
+                        "--diameter-um" if unit == "um" else "--diameter", str(size),
+                        "--cellprob-threshold", str(cellprob), "--flow-threshold", str(flow),
+                        "--img", img, "--min-cell-um", str(mincell)]
+                if umpx:
+                    argv += ["--um-per-px", str(umpx)]
+                fps_override = st.session_state.get("tif_fps_override")
+                if fps_override:
+                    argv += ["--fps", str(fps_override)]
+                with st.spinner(f"Finding cells ({preview_time(area)})…"):
+                    r = subprocess.run(argv, capture_output=True, text=True, encoding="utf-8",
+                                       errors="replace", env={**os.environ, "PYTHONUTF8": "1"})
+                if r.returncode == 0 and Path(out).is_file():
+                    st.session_state["pe_preview"] = {
+                        "npz": out, "summary": json.loads(r.stdout.strip().splitlines()[-1]),
+                        "settings": (size, unit, cellprob, flow, img, mincell, umpx,
+                                     str(rec), area)}
+                else:
+                    st.session_state.pop("pe_preview", None)
+                    st.error("The preview did not work:\n\n" + (r.stdout + r.stderr)[-1500:])
+            pv = st.session_state.get("pe_preview")
+            if pv:
+                sm = pv["summary"]
+                stale = pv["settings"] != (size, unit, cellprob, flow, img, mincell, umpx,
+                                           str(rec), area)
+                st.image(preview_image(pv["npz"], sm["diameter_px"]), use_container_width=True,
+                         caption=("Orange = cells. Blue = outlines smaller than the "
+                                  "smallest-cell size, which are not counted. Cyan circle (top "
+                                  "left) = the cell size you entered. Grey = the image cells "
+                                  "are found in."))
+                conv = (f" ({sm['diameter_px'] * sm['um_per_px']:.1f} µm)" if sm.get("um_per_px")
+                        else "")
+                n_out = sm.get("n_outlined", sm["n_cells"])
+                if sm.get("filter_applied", False):
+                    counted = (f"**{sm['n_cells']} cells** in this area ({n_out} outlined, "
+                               f"{sm['n_below_filter']} smaller than {sm['min_cell_um']:g} µm). ")
+                else:
+                    counted = (f"**{n_out} objects outlined** in this area. ")
+                st.markdown(
+                    counted + f"Cell size used: "
+                    f"{sm['diameter_px']:.1f} pixels{conv}; the outlined objects are typically "
+                    f"{(sm['median_cell_px'] or 0):.1f} pixels across.")
+                if not sm.get("filter_applied", True):
+                    st.warning("This file does not record its pixel size, so the smallest-cell "
+                               "filter cannot be shown, and the full analysis will stop at this "
+                               "recording. Enter the pixel size above.")
+                st.caption("A preview, not the final result: it skips motion correction and uses "
+                           f"the first {sm['frames_used']} frames. The full analysis then removes "
+                           "some objects (overlapping, too small or too large), so it reports "
+                           "somewhat fewer cells.  \n**Reading it:** outlines much smaller or "
+                           "larger than the cells → change the cell size. Faint cells missed → "
+                           "lower the cell-probability threshold. Outlines on background or "
+                           "debris → raise it.")
+                if stale:
+                    st.warning("The settings changed since this preview. Preview again to see them.")
+
+        st.markdown("**3. Save** the settings as a profile, so every analysis can use them")
+        st.text_input("Profile name", key="pe_name",
+                      placeholder="e.g. Smith lab, HEK-iNeurons, 20X")
+        st.text_area("Notes (cell line, microscope, objective…)", key="pe_notes", height=80)
+        own = (not prof["builtin"]) and st.session_state["pe_name"].strip() == prof["name"]
+        b1, b2, b3 = st.columns(3)
+        b1.button("💾 Save as a new profile", on_click=_save_profile_cb, args=(False,))
+        b2.button("💾 Save changes to this profile", disabled=not own,
+                  on_click=_save_profile_cb, args=(True,),
+                  help="Only for your own profiles, keeping the same name.")
+        if not prof["builtin"]:
+            sure = b3.checkbox("Yes, delete it", key="pe_del_sure")
+            b3.button("🗑 Delete this profile", disabled=not sure,
+                      on_click=_delete_profile_cb, args=(prof,))
+        if st.session_state.get("pe_error"):
+            st.error(st.session_state.pop("pe_error"))
+        if prof["builtin"]:
+            st.caption("Built-in profiles cannot be changed. To change the settings, give "
+                       "them a name and save them as a new profile.")
+    return prof
+
+
 def tif_ui(settings: dict) -> None:
     if installed_base() is None:
         st.warning("This mode needs the one-click install (see HOW_TO_INSTALL.md) and must be "
@@ -548,6 +807,8 @@ def tif_ui(settings: dict) -> None:
                        index=guess_indicator_idx(folder), key="tif_ind")
     st.caption(INDICATORS[ind_idx]["note"])
 
+    prof = detection_ui(folder)
+
     with st.expander("Options"):
         delete_bin = st.checkbox(
             "Delete Suite2p's large temporary file (data.bin) after each recording",
@@ -563,23 +824,33 @@ def tif_ui(settings: dict) -> None:
                  "(MetaMorph/MetaSeries TIFs). TIFs from other software may not carry "
                  "them; then type the acquisition rate here. It applies to every file "
                  "in the folder. Leave at 0 otherwise.") or None
+        st.session_state["tif_fps_override"] = fps_override
 
-    st.subheader("3 · Check, then start")
+    st.subheader("4 · Check, then start")
+    # A check counts only for exactly what it checked.
+    check_key = json.dumps([str(folder), ind_idx, prof["name"], fps_override, force])
     if st.button("🔍 Check the folder first (reads every file's frame rate, changes nothing)"):
         with st.spinner("Reading the files…"):
-            r = subprocess.run(analyze_argv(folder, ind_idx, dry_run=True, fps=fps_override),
+            r = subprocess.run(analyze_argv(folder, ind_idx, prof["name"], dry_run=True,
+                                            fps=fps_override),
                                capture_output=True, text=True, cwd=str(REPO_ROOT),
                                encoding="utf-8", errors="replace",
                                env={**os.environ, "PYTHONUTF8": "1"})
-        st.session_state["tif_check"] = {"folder": str(folder), "rc": r.returncode,
-                                         "out": (r.stdout + r.stderr)[-6000:]}
+        st.session_state["tif_check"] = {"folder": str(folder), "key": check_key,
+                                         "rc": r.returncode, "out": (r.stdout + r.stderr)[-6000:]}
     chk = st.session_state.get("tif_check")
-    checked_ok = bool(chk and chk["folder"] == str(folder) and chk["rc"] == 0)
-    if chk and chk["folder"] == str(folder):
+    checked_ok = bool(chk and chk.get("key") == check_key and chk["rc"] == 0)
+    if chk and chk["folder"] == str(folder) and chk.get("key") != check_key:
+        st.info("You changed a choice above since the last check. Check the folder again.")
+    elif chk and chk["folder"] == str(folder):
         st.code(chk["out"], language="text")
         if chk["rc"] == 0:
             st.caption("Each row is one recording, with its frame rate read from the file's own "
                        "timestamps. 'SKIP (done)' rows were already processed.")
+            if "REDO" in chk["out"]:
+                st.warning("Some recordings were analysed before with **different detection "
+                           "settings**. They will be detected again with this profile, and "
+                           "their earlier results replaced.")
         elif "NO RATE" in chk["out"]:
             st.error("These files carry no timestamps, so their frame rate is unknown. Open "
                      "**Options** above, type the acquisition frame rate, and check again.")
@@ -596,8 +867,8 @@ def tif_ui(settings: dict) -> None:
     if not checked_ok:
         st.caption("Run the check above first; Start becomes available when it finds no problem.")
     if st.button("▶ Start the analysis", type="primary", disabled=not checked_ok):
-        start_background(folder, analyze_argv(folder, ind_idx, force=force, delete_bin=delete_bin,
-                                              fps=fps_override))
+        start_background(folder, analyze_argv(folder, ind_idx, prof["name"], force=force,
+                                              delete_bin=delete_bin, fps=fps_override))
         st.rerun()
 
     show_results_folder(folder)
@@ -1149,6 +1420,22 @@ def compare_ui(settings: dict) -> None:
         except Exception as exc:
             st.error(f"Built the file but could not reopen it: {exc}")
             return
+        try:   # surface the workbook's own warnings (mixed event sources / detection)
+            lines = [str(r[0]) for r in xls.parse("How to read", header=None).itertuples(index=False)
+                     if isinstance(r[0], str)]
+        except Exception:
+            lines = []
+        i = 0
+        while i < len(lines):
+            if lines[i].startswith("!! WARNING"):
+                block = [lines[i].replace("!! WARNING:", "**Warning:**")]
+                i += 1
+                while i < len(lines) and lines[i].startswith("   "):
+                    block.append(lines[i].strip())
+                    i += 1
+                st.warning("  \n".join(block))
+            else:
+                i += 1
         for sheet in ["Contrast", "By group", "Per recording"]:
             if sheet in xls.sheet_names:
                 label = "Per recording (all values)" if sheet == "Per recording" else sheet

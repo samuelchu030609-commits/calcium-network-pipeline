@@ -13,6 +13,16 @@ never the value typed at acquisition. Point the GUI's "Scan a parent folder" at
 
 Resumable: a recording whose plane0/F.npy already exists is skipped unless --force.
 
+Dark final frames: when acquisition stopped mid-exposure, the last 1-3 frames are dark. New
+runs drop them (see find_dark_tail for the exact rule and its guards) by feeding Suite2p a
+trimmed copy of the last TIF part, written to the scratch folder and deleted after the run;
+the raw TIF is never modified. What was dropped is recorded in plane0/frame_trim.json.
+--no-trim turns this off. Detection settings are otherwise unchanged.
+
+Cell selection is NOT Suite2p's classifier any more: run apply_cell_rule.py (stage 1b) on
+each plane0 afterwards -- run_plate.sh (lab) and tools/analyze_folder.py
+(iNeuron-NetSync) do this automatically.
+
 Several positions per well: when a folder holds <well>_s1, _s2 ... of the same well, each
 position is its own recording and output folder (C02_s1, C02_s2 ...). A folder with one
 position per well keeps plain well names (C02), as before.
@@ -28,8 +38,23 @@ Usage (run in the suite2p env):
     python batch_suite2p.py "D:\\data\\WT" --tau 0.25 --diameter 12
     python batch_suite2p.py "D:\\data\\WT" --force          # redo finished ones
     python batch_suite2p.py "D:\\data\\WT" --delete-bin     # reclaim ~630 MB/recording
+    python batch_suite2p.py "D:\\data\\WT" --no-trim        # keep dark final frames
+
+Detection settings (defaults = the lab's locked recipe for iNeurons at 10X):
+    --diameter 12 (pixels) or --diameter-um 16.4 (converted per recording from the
+    TIF's own pixel size), --cellprob-threshold 0, --flow-threshold 0.4, --img meanImg.
+A recording already processed with DIFFERENT detection settings is redone; one
+processed with the same settings is skipped as before. The settings applied are
+written to plane0/detection_settings.json.
+
+Redoing a recording (changed settings, or --force) first moves its old suite2p/
+folder aside to suite2p_previous_<time>/ (nothing is deleted). Suite2p must start
+from an empty folder: run into an old one, it finds reg_outputs.npy, decides the
+movie is "already registered" and skips motion correction, so the redo is not a
+fresh run (seen on B05: 336 cells / STTC 0.20 in place vs 337 / 0.28 fresh).
 """
 import argparse
+import json
 import os
 import re
 import sys
@@ -122,26 +147,113 @@ def group_parts(tifs):
     return {b: [t for _, t in sorted(v)] for b, v in sorted(groups.items())}
 
 
-def check_last_frame(tif_path):
-    """Flag a truncated final frame (acquisition stopped mid-exposure).
+# --- dark final frames ------------------------------------------------------------------
+# When acquisition stops mid-exposure, the last 1-3 frames are partly or wholly dark (seen
+# at 0.10-0.36x the preceding level on the 2026-08-25 plate). Every trace then ends in a
+# deep dip, which drives every ROI's skew strongly negative. That no longer decides which
+# ROIs are cells (apply_cell_rule.py uses size), but it still distorts the traces, so new
+# runs drop those frames before Suite2p sees the movie.
+#
+# The trimmed run is the TRAILING frames darker than DARK_FRAC x the movie's median frame
+# brightness -- with two guards, because on this lab's data the 90% rule alone would also
+# cut real frames from slowly bleaching recordings (folder 1: 745 of 3221 frames; 2167: 24
+# of 100; 2168: 76 of 1000; 20x C04: 7 at 0.89x):
+#   * at most MAX_DARK_TAIL frames. A longer dim tail is bleaching or a lighting change,
+#     not a truncated exposure; it is reported and left in.
+#   * the drop must be ABRUPT: the darkest tail frame must also be below DARK_FRAC x the
+#     median of the LOCAL_REF (3) frames immediately before the tail -- a step from one
+#     frame to the next, as a cut-off exposure is. A fade fails this even when its last
+#     frames dip under 90% of the movie median (a 20-frame reference let a 12-frame fade
+#     through in testing, because it mostly measured the plateau before the fade).
+# Only the end can be trimmed. Removing frames from the middle would break the time base.
+DARK_FRAC = 0.9
+MAX_DARK_TAIL = 5
+LOCAL_REF = 3
+MEDIAN_SAMPLE = 400      # pages sampled evenly across the movie for the median brightness
 
-    Such a frame shows up as a network-wide negative deflection in every trace. It
-    lands inside CASCADE's NaN edge so events are unaffected, but it is worth naming.
-    """
+
+def len_pages(tif):
     import tifffile
 
+    with tifffile.TiffFile(str(tif)) as tf:
+        return len(tf.pages)
+
+
+def _page_mean(tf, i):
+    return float(tf.pages[i].asarray().mean())
+
+
+def find_dark_tail(parts):
+    """How many final frames to drop. Returns (k, info); k == 0 means keep everything.
+
+    Reads only ~MEDIAN_SAMPLE + MAX_DARK_TAIL + LOCAL_REF pages, not the whole movie."""
+    import tifffile
+
+    info = dict(rule=f"trailing frames < {DARK_FRAC} x median frame brightness, at most "
+                     f"{MAX_DARK_TAIL}, and an abrupt drop vs the {LOCAL_REF} frames before",
+                n_trimmed=0, reason="")
+    tfs = [tifffile.TiffFile(str(p)) for p in parts]
     try:
-        with tifffile.TiffFile(str(tif_path)) as tf:
-            n = len(tf.pages)
-            if n < 2:
-                return None
-            last = float(tf.pages[n - 1].asarray().mean())
-            prev = float(tf.pages[n - 2].asarray().mean())
-            if prev > 0 and last / prev < 0.9:
-                return last / prev
-    except Exception:
-        pass
-    return None
+        lens = [len(t.pages) for t in tfs]
+        total = sum(lens)
+        info["n_frames_tif"] = total
+        if total < MAX_DARK_TAIL + LOCAL_REF + 10:
+            info["reason"] = "movie too short to judge - nothing trimmed"
+            return 0, info
+        starts = np.cumsum([0] + lens[:-1])
+
+        def mean_at(g):                                   # global frame index -> mean
+            j = int(np.searchsorted(starts, g, side="right") - 1)
+            return _page_mean(tfs[j], int(g - starts[j]))
+
+        sample = np.unique(np.linspace(0, total - 1, min(MEDIAN_SAMPLE, total)).astype(int))
+        med = float(np.median([mean_at(g) for g in sample]))
+        info["median_frame_mean"] = round(med, 3)
+        if not med > 0:
+            info["reason"] = "median frame brightness is not positive - nothing trimmed"
+            return 0, info
+        tail_idx = list(range(total - 1, total - 1 - (MAX_DARK_TAIL + 1), -1))
+        tail = {g: mean_at(g) for g in tail_idx}
+        k = 0
+        while k <= MAX_DARK_TAIL and tail[total - 1 - k] < DARK_FRAC * med:
+            k += 1
+        info["last_frames_vs_median"] = [round(tail[g] / med, 3) for g in sorted(tail)][-MAX_DARK_TAIL:]
+        if k == 0:
+            info["reason"] = "no dark final frame"
+            return 0, info
+        if k > MAX_DARK_TAIL:
+            info["reason"] = (f"more than {MAX_DARK_TAIL} dim final frames - looks like "
+                              f"bleaching or a lighting change, not truncation - nothing trimmed")
+            return 0, info
+        ref = float(np.median([mean_at(g) for g in range(total - k - LOCAL_REF, total - k)]))
+        darkest = min(tail[total - 1 - i] for i in range(k))
+        info["darkest_vs_local"] = round(darkest / ref, 3) if ref > 0 else None
+        if not (ref > 0 and darkest < DARK_FRAC * ref):
+            info["reason"] = ("dim final frames fade gradually from the frames before them - "
+                              "not a truncated exposure - nothing trimmed")
+            return 0, info
+        info["n_trimmed"] = k
+        info["reason"] = f"dropped {k} dark final frame(s)"
+        return k, info
+    finally:
+        for t in tfs:
+            t.close()
+
+
+def write_trimmed_copy(src, dst, n_keep):
+    """Copy the first n_keep pages of src to dst (pixel data only; Suite2p reads nothing
+    else). Page by page, so a 2 GB TIF never has to fit in memory. The raw TIF is untouched."""
+    import tifffile
+
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    tmp = dst.with_name(dst.name + ".part")
+    with tifffile.TiffFile(str(src)) as tf, tifffile.TiffWriter(str(tmp), bigtiff=True) as tw:
+        for i in range(n_keep):
+            tw.write(tf.pages[i].asarray(), contiguous=True)
+    os.replace(tmp, dst)
+    with tifffile.TiffFile(str(dst)) as tf:
+        if len(tf.pages) != n_keep:
+            raise RuntimeError(f"trimmed copy {dst} has {len(tf.pages)} pages, expected {n_keep}")
 
 
 def recording_id(stem, with_site=False):
@@ -179,7 +291,66 @@ def pick_device(requested):
     return "cpu"
 
 
-def build_settings(suite2p, fps, tau, diameter, device, delete_bin):
+def um_per_pixel(tif_path):
+    """Pixel size in micrometres from a MetaMorph/MetaSeries TIF, or None if absent."""
+    import tifffile
+
+    try:
+        with tifffile.TiffFile(str(tif_path)) as tf:
+            info = (tf.metaseries_metadata or {}).get("PlaneInfo", {})
+    except Exception:
+        return None
+    x = info.get("spatial-calibration-x")
+    if (info.get("spatial-calibration-state") and x and float(x) > 0
+            and str(info.get("spatial-calibration-units", "")).lower() in ("um", "µm", "micron")):
+        return float(x)
+    return None
+
+
+# What decides which cells Suite2p finds. A finished recording is reused only when
+# all of these match what was asked for this time.
+def wanted_detection(diameter_px, cellprob, flow, img):
+    return {"algorithm": "cellpose", "cellpose_model": "cpsam", "img": img,
+            "cellprob_threshold": float(cellprob), "flow_threshold": float(flow),
+            "diameter": float(diameter_px)}
+
+
+def previous_detection(plane0):
+    """The detection settings a finished recording was made with (from its ops.npy),
+    or None when they cannot be read (then the recording is left alone)."""
+    try:
+        ops = np.load(plane0 / "ops.npy", allow_pickle=True).item()
+        d = ops["detection"]
+        cs = d["cellpose_settings"]
+        diam = np.atleast_1d(ops["diameter"]).astype(float)
+        return {"algorithm": d["algorithm"], "cellpose_model": cs["cellpose_model"],
+                "img": cs["img"], "cellprob_threshold": float(cs["cellprob_threshold"]),
+                "flow_threshold": float(cs["flow_threshold"]), "diameter": float(diam[-1])}
+    except Exception:
+        return None
+
+
+def same_detection(a, b):
+    for k in a:
+        if isinstance(a[k], float):
+            if abs(a[k] - b[k]) > 1e-6:
+                return False
+        elif a[k] != b[k]:
+            return False
+    return True
+
+
+def move_aside(folder: Path, stamp: str):
+    """Rename an old suite2p/ output folder so a re-run starts fresh; never deletes."""
+    if folder.exists():
+        dest = folder.with_name(f"suite2p_previous_{stamp}")
+        folder.rename(dest)
+        return dest
+    return None
+
+
+def build_settings(suite2p, fps, tau, diameter, device, delete_bin,
+                   cellprob=0.0, flow=0.4, img="meanImg"):
     s = suite2p.default_settings()
     s["torch_device"] = device
     s["fs"] = float(fps)
@@ -192,9 +363,9 @@ def build_settings(suite2p, fps, tau, diameter, device, delete_bin):
     # that are not shape-separable -- so % active would be biased by detection.
     s["detection"]["algorithm"] = "cellpose"
     s["detection"]["cellpose_settings"]["cellpose_model"] = "cpsam"
-    s["detection"]["cellpose_settings"]["img"] = "meanImg"
-    s["detection"]["cellpose_settings"]["flow_threshold"] = 0.4
-    s["detection"]["cellpose_settings"]["cellprob_threshold"] = 0.0
+    s["detection"]["cellpose_settings"]["img"] = img
+    s["detection"]["cellpose_settings"]["flow_threshold"] = float(flow)
+    s["detection"]["cellpose_settings"]["cellprob_threshold"] = float(cellprob)
     s["detection"]["cellpose_settings"]["cellpose_chan2"] = False
     s["classification"]["use_builtin_classifier"] = False
     s["extraction"]["neuropil_coefficient"] = 0.7
@@ -210,6 +381,20 @@ def main():
                     help="Calcium decay timescale (default 0.25, jGCaMP8s/Fluo-4).")
     ap.add_argument("--diameter", type=float, default=12.0,
                     help="Expected soma diameter in pixels (default 12).")
+    ap.add_argument("--diameter-um", type=float, default=None,
+                    help="Expected soma diameter in micrometres instead; converted to "
+                         "pixels per recording from the TIF's own pixel size.")
+    ap.add_argument("--cellprob-threshold", type=float, default=0.0,
+                    help="Cellpose cell-probability threshold (default 0). Lower finds "
+                         "more and fainter cells; higher finds fewer, clearer ones.")
+    ap.add_argument("--flow-threshold", type=float, default=0.4,
+                    help="Cellpose flow-error threshold (default 0.4). Higher keeps more "
+                         "irregularly shaped objects; lower is stricter.")
+    ap.add_argument("--img", default="meanImg",
+                    choices=["meanImg", "max_proj", "max_proj / meanImg"],
+                    help="Image Cellpose segments (default meanImg, the average image).")
+    ap.add_argument("--profile-name", default=None,
+                    help="Name of the detection profile, recorded with each recording.")
     ap.add_argument("--fps", type=float, default=None,
                     help="Override the frame rate for ALL recordings. Only use this "
                          "when the TIFs carry no timestamps.")
@@ -220,6 +405,8 @@ def main():
     ap.add_argument("--delete-bin", action="store_true",
                     help="Delete data.bin after each run (~630 MB each). Re-detection "
                          "would then need full re-registration.")
+    ap.add_argument("--no-trim", action="store_true",
+                    help="Do NOT drop dark final frames (truncated last exposures).")
     ap.add_argument("--dry-run", action="store_true",
                     help="List what would run, touch nothing.")
     ap.add_argument("--fast-disk", default=None, metavar="PATH",
@@ -259,26 +446,67 @@ def main():
 
     plan = []
     broken = []
+    no_scale = []
     for base, parts in groups.items():
         rid = rid_of[base]
         out = parent / rid
-        done = (out / "suite2p" / "plane0" / "F.npy").is_file()
+        plane0 = out / "suite2p" / "plane0"
         fps, src, n, problem = read_true_fps(parts)
         if args.fps is not None:
             fps, src = args.fps, "--fps override"
-        plan.append((parts, rid, out, done, fps, src, n))
-        flag = "SKIP (done)" if done and not args.force else "run"
+        um_px = um_per_pixel(parts[0])
+        if args.diameter_um is not None:
+            diam = args.diameter_um / um_px if um_px else None
+        else:
+            diam = args.diameter
+        # Finished = Suite2p output exists AND was made with the detection settings
+        # asked for now. Different settings -> redo, so a changed profile can never
+        # silently reuse the old cells.
+        redo = False
+        done = (plane0 / "F.npy").is_file()
+        if done and diam is not None:
+            prev = previous_detection(plane0)
+            want = wanted_detection(diam, args.cellprob_threshold, args.flow_threshold, args.img)
+            if prev is not None and not same_detection(want, prev):
+                done, redo = False, True
+        trim, trim_info = (0, dict(n_trimmed=0, reason="--no-trim")) if args.no_trim else (0, {})
+        if not args.no_trim and not (done and not args.force):
+            try:
+                trim, trim_info = find_dark_tail(parts)
+            except Exception as e:                       # unreadable -> do not guess
+                trim, trim_info = 0, dict(n_trimmed=0, reason=f"could not check: {e}")
+            if trim and trim >= len_pages(parts[-1]):
+                trim, trim_info["reason"] = 0, "dark tail spans a split-file boundary - nothing trimmed"
+                trim_info["n_trimmed"] = 0
+        plan.append((parts, rid, out, done, fps, src, n, diam, um_px, redo, trim, trim_info))
+        flag = ("SKIP (done)" if done and not args.force
+                else "REDO (detection settings changed)" if redo else "run")
         rate = f"{fps:.3f} Hz ({src})" if fps else "NO RATE -> pass --fps"
         joined = f"  [{len(parts)} parts joined]" if len(parts) > 1 else ""
         dur = f"{n / fps:6.1f}s" if fps else "     ?"
-        print(f"  {rid:<12} {n:>5} frames {dur}  {rate:<34} {flag}{joined}")
+        cell = ""
+        if args.diameter_um is not None:
+            cell = (f"  cell {args.diameter_um:g} um = {diam:.1f} px" if diam
+                    else "  NO PIXEL SIZE in this TIF")
+        print(f"  {rid:<12} {n:>5} frames {dur}  {rate:<34} {flag}{joined}{cell}")
+        if trim:
+            print(f"      trim: {trim_info['reason']} "
+                  f"(last frames vs median {trim_info.get('last_frames_vs_median')})")
+        elif trim_info.get("reason", "") not in ("", "no dark final frame", "--no-trim"):
+            print(f"      note: {trim_info['reason']}")
         if problem:
             print(f"      !! {problem}")
             broken.append(rid)
+        if diam is None:
+            no_scale.append(rid)
 
     if broken:
         sys.exit(f"\nRefusing to run: {', '.join(broken)} could not be verified as one "
                  f"continuous recording. Check those files before going further.")
+    if no_scale:
+        sys.exit(f"\n{', '.join(no_scale)}: the TIF does not record its pixel size, so a "
+                 f"cell size in micrometres cannot be converted. Give the cell size in "
+                 f"pixels instead (--diameter).")
     missing_rate = [p for p in plan if p[4] is None and not (p[3] and not args.force)]
     if missing_rate:
         sys.exit("\nSome recordings have no readable frame rate. Pass --fps.")
@@ -296,15 +524,29 @@ def main():
 
     device = pick_device(args.device)
     print(f"suite2p {suite2p.version} | device={device} | tau={args.tau} "
-          f"| diameter={args.diameter}\n")
+          f"| diameter={args.diameter_um if args.diameter_um is not None else args.diameter}"
+          f"{' um' if args.diameter_um is not None else ' px'} | cellprob={args.cellprob_threshold}"
+          f" | flow={args.flow_threshold} | img={args.img}\n")
 
     results = []
-    for i, (parts, rid, out, _done, fps, src, n) in enumerate(todo, 1):
+    for i, (parts, rid, out, _done, fps, src, n, diam, um_px, redo, trim, trim_info) in enumerate(todo, 1):
         print("=" * 72)
         print(f"[{i}/{len(todo)}] {rid}  ({n} frames @ {fps:.3f} Hz from {src})")
         print("=" * 72, flush=True)
         t0 = time.time()
+        trimmed_copy = None
         try:
+            if redo or args.force:
+                # A re-run must start from an empty folder (see the module docstring).
+                # The old CASCADE/metrics files move along with the old cells.
+                stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+                moved = move_aside(out / "suite2p", stamp)
+                if moved:
+                    print(f"  moved the earlier Suite2p output aside to {rid}/{moved.name}/")
+                if args.fast_disk:
+                    sc = Path(args.fast_disk).expanduser().resolve() / rid / "suite2p"
+                    if move_aside(sc, stamp):
+                        print("  moved the earlier scratch folder aside as well")
             out.mkdir(parents=True, exist_ok=True)
             # Scratch (data.bin) can live apart from the results: on slow media the
             # repeated data.bin reads during registration/detection dominate runtime.
@@ -313,25 +555,53 @@ def main():
                 scratch.mkdir(parents=True, exist_ok=True)
             else:
                 scratch = out
+            inputs = list(parts)
+            if trim:
+                # Suite2p reads only pixels, so a trimmed copy of the LAST part replaces it.
+                trimmed_copy = scratch / "_trimmed_input" / parts[-1].name
+                print(f"Dropping {trim} dark final frame(s): writing {trimmed_copy}", flush=True)
+                write_trimmed_copy(parts[-1], trimmed_copy, len_pages(parts[-1]) - trim)
+                inputs[-1] = trimmed_copy
             db = suite2p.default_db()
             db.update(dict(
                 data_path=[str(parts[0].parent)],
-                file_list=[str(t) for t in parts],   # in order; Suite2p concatenates
+                file_list=[str(t) for t in inputs],  # in order; Suite2p concatenates
                 look_one_level_down=False,
                 input_format="tif",
                 nplanes=1, nchannels=1, functional_chan=1,
                 save_path0=str(out), fast_disk=str(scratch), save_folder="suite2p",
                 batch_size=500,
             ))
-            settings = build_settings(suite2p, fps, args.tau, args.diameter,
-                                      device, args.delete_bin)
+            settings = build_settings(suite2p, fps, args.tau, diam, device, args.delete_bin,
+                                      cellprob=args.cellprob_threshold,
+                                      flow=args.flow_threshold, img=args.img)
             suite2p.run_s2p(db=db, settings=settings)
 
             plane0 = out / "suite2p" / "plane0"
+            is_default = (args.diameter_um is None and args.diameter == 12.0
+                          and args.cellprob_threshold == 0.0 and args.flow_threshold == 0.4
+                          and args.img == "meanImg")
+            record = {"profile": args.profile_name or (
+                          "Lippmann iNeurons, 10X (built-in default)" if is_default
+                          else "custom settings given on the command line"),
+                      "cellpose_model": "cpsam", "img": args.img,
+                      "diameter_px": float(diam),
+                      "diameter_um": (round(float(diam) * um_px, 3) if um_px else None),
+                      "um_per_px": um_px, "cellprob_threshold": args.cellprob_threshold,
+                      "flow_threshold": args.flow_threshold, "tau": args.tau,
+                      "written": datetime.now().isoformat(timespec="seconds")}
+            (plane0 / "detection_settings.json").write_text(json.dumps(record, indent=2))
             iscell = np.load(plane0 / "iscell.npy")
             n_cells = int(iscell[:, 0].sum())
-            ratio = check_last_frame(parts[-1])
-            note = "" if ratio is None else f"  ⚠ truncated final frame ({ratio:.2f}x)"
+            n_written = int(np.load(plane0 / "F.npy", mmap_mode="r").shape[1])
+            expected = (trim_info.get("n_frames_tif") or n) - trim
+            if trim and n_written != expected:
+                raise RuntimeError(f"Suite2p wrote {n_written} frames, expected {expected} "
+                                   f"after dropping {trim}")
+            (plane0 / "frame_trim.json").write_text(json.dumps(dict(
+                trim_info, n_frames_suite2p=n_written, raw_tifs=[str(t) for t in parts],
+                written=datetime.now().isoformat(timespec="seconds")), indent=1))
+            note = f"  dropped {trim} dark final frame(s)" if trim else ""
             secs = time.time() - t0
             print(f"\n-> {rid}: {n_cells}/{iscell.shape[0]} cells in {secs:.0f}s{note}",
                   flush=True)
@@ -339,6 +609,9 @@ def main():
         except Exception as e:
             traceback.print_exc()
             results.append((rid, "FAILED", str(e)[:80], time.time() - t0, ""))
+        finally:
+            if trimmed_copy is not None and trimmed_copy.exists():
+                trimmed_copy.unlink()                    # a regenerable copy of raw data
 
     print("\n" + "=" * 72)
     print("SUMMARY")

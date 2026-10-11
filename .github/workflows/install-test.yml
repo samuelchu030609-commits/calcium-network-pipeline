@@ -11,8 +11,8 @@ on:
       - "install/**"
       - "INSTALL_WINDOWS.bat"
       - "INSTALL_MAC.sh"
-      - "tools/analyze_folder.py"
-      - "tools/batch_suite2p.py"
+      - "tools/**"
+      - "settings/**"
       - "pipeline/**"
       - ".github/workflows/install-test.yml"
 

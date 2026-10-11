@@ -2,6 +2,8 @@
 """All three stages over a folder of microscope TIFs, in one go.
 
     stage 1  Suite2p   (tools/batch_suite2p.py, in the `suite2p` env)
+    stage 1b cells     (tools/apply_cell_rule.py, `suite2p` env): outlines at least the
+                       profile's minimum size across are the cells, not Suite2p's classifier
     stage 2  CASCADE   (pipeline.run_cascade,   in the `cascade` env)  - GCaMP only
     stage 3  metrics   (pipeline.run_pipeline,  in the `analysis` env)
 
@@ -14,10 +16,14 @@ For a folder <F> holding <name>.tif files it leaves:
     <F>/<ID>/suite2p/plane0/...           every stage's full output, as before
     <F>/RESULTS/<ID>_metrics.xlsx         a copy of each workbook, all in one place
     <F>/RESULTS/<ID>_baseline_qc.png      and its baseline-QC figure
+    <F>/RESULTS/<ID>_cell_rule.json       which outlines were counted as cells, and why
     <F>/RESULTS/run_log_<time>.txt        this run's full log
 
-Resumable: stage 1 skips recordings that already have Suite2p output, and
-stages 2-3 skip recordings whose workbook already exists (use --force to redo).
+Resumable: stage 1 skips recordings that already have Suite2p output, stage 1b
+changes nothing once applied, and stages 2-3 skip recordings whose workbook already
+exists and is newer than the cell list (use --force to redo). When stage 1b changes a
+recording's cell list (first run after an update, or a new minimum size), its stages
+2-3 are redone automatically: the old workbook describes other cells.
 One recording failing does not stop the others.
 
 Usage (any Python of the install; the GUI uses its own):
@@ -37,6 +43,9 @@ from datetime import datetime
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO / "tools"))
+import detection_profiles  # noqa: E402
+from batch_suite2p import previous_detection, same_detection, wanted_detection  # noqa: E402
 
 # What the user picks -> what config.json needs. Mirrors gui/app.py INDICATORS and
 # pipeline/config.py ROUTE_FAMILY.
@@ -112,6 +121,39 @@ def stream(argv, env=None, cwd=None) -> int:
     return proc.wait()
 
 
+def choose_cells(py: Path, plane0: Path, profile: dict) -> str | None:
+    """Stage 1b on one recording. None when it worked, else the reason it did not.
+
+    The pixel size comes from the TIF. Only when the TIF does not record one is the
+    profile's fallback pixel size used -- never instead of the file's own."""
+    argv = [str(a) for a in (py, REPO / "tools" / "apply_cell_rule.py", plane0,
+                             *detection_profiles.stage1b_args(profile))]
+    r = subprocess.run(argv, capture_output=True, text=True, encoding="utf-8",
+                       errors="replace")
+    text = r.stdout + r.stderr
+    no_cal = "spatial-calibration" in text or "spatial calibration" in text
+    if r.returncode == 0 or not (no_cal and profile.get("um_per_px")):
+        print(text.rstrip("\n"), flush=True)     # the fallback's first try stays silent
+    if r.returncode == 0:
+        return None
+    if no_cal and profile.get("um_per_px"):
+        print(f"   This file does not record its pixel size: using the profile's "
+              f"{profile['um_per_px']:g} µm per pixel.", flush=True)
+        if stream(argv + ["--um-per-px", repr(float(profile["um_per_px"]))]) == 0:
+            return None
+        return "cells could not be chosen by size (see above)"
+    if no_cal:
+        return ("this file does not record its pixel size, so cell sizes in micrometres "
+                "cannot be measured. Enter the pixel size in the detection profile.")
+    return "cells could not be chosen by size (see above)"
+
+
+def is_stale(xlsx: Path, plane0: Path) -> bool:
+    """The workbook predates the current cell list (stage 1b changed it since)."""
+    rule = plane0 / "cell_rule.json"
+    return xlsx.is_file() and rule.is_file() and rule.stat().st_mtime > xlsx.stat().st_mtime
+
+
 def read_fps(plane0: Path) -> float | None:
     """The frame rate stage 1 stored, which batch_suite2p takes from the TIF timestamps."""
     try:
@@ -125,6 +167,40 @@ def recordings(folder: Path) -> list[Path]:
     """<folder>/<ID>/ for every recording stage 1 has finished."""
     return sorted(p.parent.parent for p in folder.glob("*/suite2p/plane0")
                   if (p / "F.npy").is_file())
+
+
+def detection_check(plane0: Path, profile: dict):
+    """Were this recording's cells found with the chosen profile?
+
+    Returns (expected detection settings for the run_pipeline guard, None) when yes,
+    or (None, reason) when no -- e.g. stage 1 could not redo it after the profile
+    changed, so its old cells must not be analysed as if they were new ones.
+    """
+    rec_file = plane0 / "detection_settings.json"
+    size = float(profile["cell_size"])
+    if rec_file.is_file():
+        rec = json.loads(rec_file.read_text())
+        diam = float(rec["diameter_px"])
+        if profile["cell_size_unit"] == "um":
+            size_ok = rec.get("um_per_px") and abs(diam * rec["um_per_px"] - size) < 1e-3
+        else:
+            size_ok = abs(diam - size) < 1e-6
+        if not size_ok:
+            return None, (f"its cells were found with a cell size of {diam:.2f} px, not the "
+                          f"profile's {size:g} {'um' if profile['cell_size_unit'] == 'um' else 'px'}")
+    elif profile["cell_size_unit"] == "px":
+        diam = size
+    else:
+        return None, ("it has no record of the cell size used, so it cannot be checked "
+                      "against a profile given in micrometres")
+    want = wanted_detection(diam, profile["cellprob_threshold"], profile["flow_threshold"],
+                            profile["image"])
+    prev = previous_detection(plane0)
+    if prev is not None and not same_detection(want, prev):
+        return None, ("its cells were found with different detection settings than the "
+                      f"profile '{profile['name']}' (stage 1 did not redo it - see above)")
+    return {k: want[k] for k in ("cellpose_model", "img", "cellprob_threshold",
+                                 "flow_threshold", "diameter")}, None
 
 
 class Tee:
@@ -161,7 +237,14 @@ def main() -> int:
     ap.add_argument("--fps", type=float, default=None,
                     help="Frame rate for ALL recordings. Only for TIFs that carry no "
                          "timestamps (stage 1 will tell you if so).")
+    ap.add_argument("--profile", default=None,
+                    help="Cell-detection profile: its name, or a profile .json file. "
+                         f"Default: '{detection_profiles.DEFAULT_NAME}'.")
     args = ap.parse_args()
+    try:
+        profile = detection_profiles.find(args.profile)
+    except ValueError as e:
+        sys.exit(str(e))
 
     folder = Path(args.folder).expanduser().resolve()
     if not folder.is_dir():
@@ -184,6 +267,7 @@ def main() -> int:
 
     print(f"Folder    : {folder}")
     print(f"Indicator : {choice['indicator']}  (route {choice['route']})")
+    print(f"Detection : {profile['name']} - {detection_profiles.describe(profile)}")
     print(f"Started   : {datetime.now():%Y-%m-%d %H:%M}\n")
 
     # ── Stage 1: Suite2p (skips finished recordings itself) ──
@@ -202,6 +286,7 @@ def main() -> int:
             s1.append("--delete-bin")
         if args.fps:
             s1 += ["--fps", str(args.fps)]
+        s1 += detection_profiles.stage1_args(profile)
         rc1 = stream(s1)
     else:
         # Re-analysing a folder whose TIFs were moved away is fine; nothing at all is not.
@@ -233,10 +318,30 @@ def main() -> int:
         print("#" * 72, flush=True)
         t0 = time.time()
 
-        if xlsx.is_file() and not args.force:
+        expected, why = detection_check(plane0, profile)
+        if expected is None:
+            print(f"!! {why}", flush=True)
+            summary.append((rid, "SKIPPED: detected with other settings", 0))
+            continue
+        print(f"-- stage 1b: which outlines are cells (at least "
+              f"{float(profile['min_cell_diameter_um']):g} µm across)", flush=True)
+        why = choose_cells(pys["suite2p"], plane0, profile)
+        if why:
+            print(f"!! {why}", flush=True)
+            summary.append((rid, "FAILED: cells not chosen (stage 1b)", time.time() - t0))
+            continue
+        stale = is_stale(xlsx, plane0)
+        if stale:
+            print("-- the cell list changed since this recording was analysed: "
+                  "redoing stages 2-3", flush=True)
+        if xlsx.is_file() and not args.force and not stale:
             print("already analysed - skipped (use --force to redo)")
             status = "ok (already done)"
         else:
+            # Copies from an earlier run must not outlive this one.
+            for old in (f"{rid}_metrics.xlsx", f"{rid}_metrics_baseline_qc.png",
+                        f"{rid}_detection_settings.json", f"{rid}_cell_rule.json"):
+                (results_dir / old).unlink(missing_ok=True)
             fps = read_fps(plane0)
             if not fps:
                 summary.append((rid, "FAILED: no frame rate in ops.npy", 0))
@@ -253,7 +358,9 @@ def main() -> int:
                     (plane0 / f).unlink(missing_ok=True)
             cfg = {"_comment": "Written by tools/analyze_folder.py",
                    "indicator": choice["indicator"], "native_fps": fps,
-                   "route": choice["route"], "neuropil_coeff": 0.7}
+                   "route": choice["route"], "neuropil_coeff": 0.7,
+                   "detection_profile": profile["name"],
+                   "detection_expected": expected}
             (rec / "config.json").write_text(json.dumps(cfg, indent=2))
             rc = stream([pys["analysis"], "-m", "pipeline.run_pipeline", rec],
                         env=env, cwd=REPO)
@@ -263,6 +370,9 @@ def main() -> int:
             shutil.copy2(xlsx, results_dir / xlsx.name)
             for png in plane0.glob("*baseline_qc.png"):
                 shutil.copy2(png, results_dir / png.name)
+            for rec_file in ("detection_settings.json", "cell_rule.json"):
+                if (plane0 / rec_file).is_file():
+                    shutil.copy2(plane0 / rec_file, results_dir / f"{rid}_{rec_file}")
         summary.append((rid, status, time.time() - t0))
 
     # ── Summary ──

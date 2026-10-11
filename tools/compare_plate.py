@@ -14,6 +14,13 @@ Reads each well's metrics workbook (<well>_metrics.xlsx from run_pipeline / the 
                 PNGs in <plate>/<plate>_graphs/
   Notes         plate map, source files, and the code version that made the numbers
 
+Quadrant plates (folders C02_s1 .. C02_s4 = the four quadrants of well C02, each its own
+3-min movie): the quadrants are POOLED into one whole-well value (see pool_well). Activity
+measures use every quadrant with cells; synchrony, burst and team measures use only
+quadrants with >= --min-active active cells (default 5), because a network statistic from
+2-3 cells is noise. The Quadrants tab lists what was used. The unit of the statistics is
+the WELL.
+
 The plate map is given by well COLUMN number (the digits after the row letter):
     python tools/compare_plate.py "/path/to/plate" --group WT=02,03 --group KCNT1=04,05
 
@@ -41,7 +48,107 @@ THIN = Side(style="thin", color="BFBFBF")
 GROUP_COLOURS = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100"]
 MIN_N_TEST = 3            # wells with a value, per group, before a t-test is run
 NOT_TESTED = {"...as a p-value": "not tested: this row is itself a p-value"}
+POS_RE = re.compile(r"^([A-H][0-9]{2})_s([0-9]+)$")
+ACTIVE_ROW = "Cells that fired (active)"
+TEAMS_ROW = "Cell teams (assemblies)"
 
+
+def pool_well(quads, sheets, n_quads_total, min_active):
+    """Combine one well's quadrants into ONE well-level Key Numbers table + burst list.
+
+    The quadrants are four separate 3-min movies of the same well, filmed one after another,
+    so the well's cell population is the union of the quadrants' cells:
+      * counts are summed (cells tracked, cells that fired, teams, cells in a team) and
+        % active is total active / total cells;
+      * per-cell rates are recomputed over ALL active cells of the well (median / mean);
+      * synchrony is a within-quadrant quantity (cells in different quadrants were never
+        recorded at the same time), pooled over quadrants weighted by the number of cell
+        pairs (STTC) or active cells (per-cell measures) that each quadrant contributed;
+      * bursts are pooled event by event; the burst count is per 3-min quadrant so that
+        wells with fewer usable quadrants are comparable.
+    Synchrony/burst/team rows use only quadrants with >= min_active active cells.
+    Returns (key DataFrame, bursts DataFrame, n quadrants used for synchrony, {quad: used}).
+    """
+    kn = {q: dict(zip(sheets[q]["Key Numbers"]["Measure"], sheets[q]["Key Numbers"]["Value"]))
+          for q in quads}
+    num = lambda q, m: (lambda v: v[0] if v[1] in ("num", "pct") else np.nan)(parse_value(kn[q][m]))
+    active = {q: (num(q, ACTIVE_ROW) if np.isfinite(num(q, ACTIVE_ROW)) else 0) for q in quads}
+    cells = {q: num(q, "Cells tracked") for q in quads}
+    sq = [q for q in quads if active[q] >= min_active]
+    rate_frames = [sheets[q]["Firing Rates (per cell)"] for q in quads
+                   if len(sheets[q]["Firing Rates (per cell)"])]
+    rates = (pd.concat(rate_frames, ignore_index=True) if rate_frames
+             else pd.DataFrame({"firings_per_minute": []}))
+    tog = {q: sheets[q]["Firing Together (per cell)"] for q in sq}
+    frames = [sheets[q]["Group Events (bursts)"].assign(quadrant=POS_RE.match(q).group(2))
+              for q in sq if len(sheets[q]["Group Events (bursts)"])]
+    bursts = (pd.concat(frames, ignore_index=True) if frames
+              else sheets[quads[0]]["Group Events (bursts)"].iloc[0:0])
+
+    def wmean(m, weight):
+        vals = [(num(q, m), weight(q)) for q in sq]
+        vals = [(v, w) for v, w in vals if np.isfinite(v) and w > 0]
+        return (sum(v * w for v, w in vals) / sum(w for _, w in vals)) if vals else np.nan
+
+    gated_k = {q: int(tog[q]["meets_event_floor"].astype(bool).sum()) for q in sq}
+    gated_pairs = lambda q: gated_k[q] * (gated_k[q] - 1) / 2
+    all_pairs = lambda q: active[q] * (active[q] - 1) / 2
+    fr = rates["firings_per_minute"].dropna()
+    gaps = bursts["gap_since_previous_burst_sec"].dropna() if len(bursts) else pd.Series(dtype=float)
+    ev_total = {q: float(sheets[q]["Summary"].set_index("Metric").loc["total_events_detected", "Value"])
+                for q in sq}
+
+    def summed(m, only_numeric_quads):
+        vals = [parse_value(kn[q][m]) for q in sq]
+        nums = [v for v, k in vals if k == "num"]
+        return float(sum(nums)) if nums else (vals[0][0] if vals and only_numeric_quads else np.nan)
+
+    teams_ok = [q for q in sq if parse_value(kn[q][TEAMS_ROW])[1] == "num"]
+    pct = lambda x: np.nan if not np.isfinite(x) else f"{x * 100:.1f}%"
+    tot_cells = float(np.nansum(list(cells.values())))
+    rule = {
+        "Cells tracked": tot_cells,
+        ACTIVE_ROW: float(sum(active.values())),
+        "Percent active": pct(sum(active.values()) / tot_cells) if tot_cells else np.nan,
+        "Typical firing rate (median /min)": float(fr.median()) if len(fr) else np.nan,
+        "Typical cell fires about every (sec)": (60.0 / fr.median()) if len(fr) and fr.median() else np.nan,
+        "Average firing rate (mean /min)": float(fr.mean()) if len(fr) else np.nan,
+        "Togetherness (STTC, -1 to +1)": wmean("Togetherness (STTC, -1 to +1)", gated_pairs),
+        "...measured from how many cells": f"{len(sq)} of {n_quads_total} quadrants",
+        "Is that togetherness real? (z-score)": wmean("Is that togetherness real? (z-score)", gated_pairs),
+        "...as a p-value": "per quadrant only",
+        "...and how big vs chance (excess)": wmean("...and how big vs chance (excess)", gated_pairs),
+        "Togetherness incl. barely-firing cells": wmean("Togetherness incl. barely-firing cells", all_pairs),
+        "Follows-the-crowd (pop. coupling, 0-1)": wmean("Follows-the-crowd (pop. coupling, 0-1)", lambda q: active[q]),
+        "Average partners per cell": (lambda v: v if np.isfinite(v) else
+                                      next((kn[q]["Average partners per cell"] for q in sq), np.nan))(
+                                          wmean("Average partners per cell", lambda q: active[q])),
+        TEAMS_ROW: (float(sum(num(q, TEAMS_ROW) for q in teams_ok)) if teams_ok
+                    else ("underpowered" if sq else np.nan)),
+        "Cells that belong to a team": (float(sum(num(q, "Cells that belong to a team") for q in teams_ok))
+                                        if teams_ok else np.nan),
+        "Network bursts": (len(bursts) / len(sq)) if sq else np.nan,
+        "Biggest burst (% of cells)": pct(max(num(q, "Biggest burst (% of cells)") for q in sq)) if sq else np.nan,
+        "Typical burst length (sec)": float(bursts["burst_length_seconds"].mean()) if len(bursts) else np.nan,
+        "Gap between bursts (sec)": float(gaps.mean()) if len(gaps) else np.nan,
+        "How regular the bursts are (CV)": float(gaps.std(ddof=1) / gaps.mean()) if len(gaps) >= 2 else np.nan,
+        "Firings outside any burst (%)": pct(
+            sum(num(q, "Firings outside any burst (%)") * ev_total[q] for q in sq)
+            / sum(ev_total[q] for q in sq)) if sq and sum(ev_total[q] for q in sq) else np.nan,
+    }
+    ref = sheets[quads[0]]["Key Numbers"]
+    out = []
+    for m in ref["Measure"]:
+        if m.startswith("- "):
+            out.append((m, np.nan))
+        elif m in rule:
+            out.append((m, rule[m]))
+        else:                        # a row this version does not know how to pool
+            out.append((m, "not pooled"))
+    key = pd.DataFrame(out, columns=["Measure", "Value"])
+    key["What it means"] = list(ref["What it means"])
+    key.loc[key["Measure"] == "Network bursts", "Measure"] = "Network bursts (per 3-min quadrant)"
+    return key, bursts, len(sq), {q: q in sq for q in quads}
 
 def parse_groups(specs):
     groups = {}
@@ -231,7 +338,7 @@ def make_graphs(graph_dir, pname, groups, gw, key_rows, tests):
 
     graph_dir.mkdir(parents=True, exist_ok=True)
     for old in graph_dir.glob("*.png"):
-        old.unlink()
+        old.unlink(missing_ok=True)   # ._ sidecars vanish with their image on exFAT
     plt.rcParams.update({"font.family": "Arial", "font.size": 10})
     ink, muted, grid = "#0b0b0b", "#52514e", "#e6e5e0"
     gnames = list(groups)[:2]
@@ -303,6 +410,9 @@ def main():
     ap.add_argument("--group", action="append", required=True,
                     help="NAME=column numbers, e.g. WT=02,03 (repeat per group).")
     ap.add_argument("--out", default=None, help="Output path (default: inside the plate folder).")
+    ap.add_argument("--min-active", type=int, default=5,
+                    help="Positions need at least this many active cells to count toward "
+                         "synchrony/burst/team measures (default 5; quadrant plates only).")
     args = ap.parse_args()
 
     plate = Path(args.plate).expanduser().resolve()
@@ -310,28 +420,57 @@ def main():
     groups = parse_groups(args.group)
 
     books = {}
-    # Workbooks are <plate>_<well>_metrics.xlsx (run_plate.sh) or <well>_metrics.xlsx
+    # Workbooks are <plate>_<rec>_metrics.xlsx (run_plate.sh) or <rec>_metrics.xlsx
     # (this repo's run_pipeline / GUI, which names them after the recording folder).
     for wb in sorted(plate.glob("*/suite2p/plane0/*_metrics.xlsx")):
-        well = wb.parent.parent.parent.name
-        if wb.name in (f"{pname}_{well}_metrics.xlsx", f"{well}_metrics.xlsx"):
-            books[well] = wb
+        rid = wb.parent.parent.parent.name
+        if wb.name in (f"{pname}_{rid}_metrics.xlsx", f"{rid}_metrics.xlsx"):
+            books[rid] = wb
     if not books:
         sys.exit(f"No <well>_metrics.xlsx or {pname}_<well>_metrics.xlsx found under {plate}")
-    mapped = {w for w in books if any(w[1:] in c for c in groups.values())}
-    unmapped = sorted(set(books) - mapped)
-    wells = sorted(mapped, key=lambda w: (w[1:], w[0]))   # by column, then row
+    multi = any(POS_RE.match(r) for r in books)
+    well_of = (lambda rid: POS_RE.match(rid).group(1) if POS_RE.match(rid) else rid)
+    in_map = (lambda w: any(w[1:] in c for c in groups.values()))
+    unmapped = sorted({well_of(r) for r in books if not in_map(well_of(r))})
+    recs = sorted(r for r in books if in_map(well_of(r)))
 
-    key, bursts, prov = {}, {}, {}
-    for w in wells:
-        x = pd.read_excel(books[w], sheet_name=None)
-        key[w] = x["Key Numbers"]
-        bursts[w] = x["Group Events (bursts)"]
-        p = books[w].with_name(books[w].stem + ".PROVENANCE.txt")
+    key_rec, bursts_rec, prov_rec, sheets = {}, {}, {}, {}
+    for rid in recs:
+        x = pd.read_excel(books[rid], sheet_name=None)
+        sheets[rid] = x
+        key_rec[rid] = x["Key Numbers"]
+        bursts_rec[rid] = x["Group Events (bursts)"]
+        p = books[rid].with_name(books[rid].stem + ".PROVENANCE.txt")
         txt = p.read_text() if p.exists() else ""
-        prov[w] = {k: (re.search(rf"^{k}: (.*)$", txt, re.M) or [None, "?"])[1]
-                   for k in ("pipeline_fixes_sha256_12", "template_sha256_12",
-                             "event_source", "cascade_model", "generated")}
+        prov_rec[rid] = {k: (re.search(rf"^{k}: (.*)$", txt, re.M) or [None, "?"])[1]
+                         for k in ("pipeline_fixes_sha256_12", "template_sha256_12",
+                                   "event_source", "cascade_model", "generated")}
+
+    wells = sorted({well_of(r) for r in recs}, key=lambda w: (w[1:], w[0]))  # column, row
+    key, bursts, prov, n_sync, pos_rows = {}, {}, {}, {}, []
+    if multi:
+        # Every quadrant folder, including ones that produced no workbook (no cells).
+        all_pos = sorted(d.name for d in plate.iterdir()
+                         if d.is_dir() and POS_RE.match(d.name) and in_map(well_of(d.name)))
+        for w in wells:
+            mine = [r for r in recs if well_of(r) == w]
+            total = len([p for p in all_pos if well_of(p) == w])
+            key[w], bursts[w], n_sync[w], sync_used = pool_well(
+                mine, sheets, total, args.min_active)
+            used = {q: (True, sync_used[q]) for q in mine}
+            prov[w] = prov_rec[mine[0]]
+            for pid in (p for p in all_pos if well_of(p) == w):
+                if pid not in used:
+                    pos_rows.append((pid, "", "", "no", "no", "no results: no cells detected"))
+                    continue
+                d = dict(zip(key_rec[pid]["Measure"], key_rec[pid]["Value"]))
+                a = parse_value(d[ACTIVE_ROW])[0]
+                pos_rows.append((pid, d["Cells tracked"], d[ACTIVE_ROW], "yes",
+                                 "yes" if used[pid][1] else "no",
+                                 "" if used[pid][1] else f"fewer than {args.min_active} active cells"))
+    else:
+        for w in wells:
+            key[w], bursts[w], prov[w] = key_rec[w], bursts_rec[w], prov_rec[w]
 
     ref = key[wells[0]]
     measures = list(ref["Measure"])
@@ -395,6 +534,14 @@ def main():
     cell(ws, r + 1, 1, "n/a = not defined for that well (e.g. burst length when the well had "
                        "no network bursts, or team membership when the team test was skipped).",
          italic=True, border=False)
+    if multi:
+        cell(ws, r + 3, 1, f"Each well = its four quadrants pooled into one well: cells and teams "
+                           f"are summed, % active and firing rates are over all the well's cells, "
+                           f"synchrony is pair-weighted across quadrants (quadrants were filmed one "
+                           f"after another, so only cells within a quadrant can be compared). "
+                           f"Synchrony, burst and team rows use only quadrants "
+                           f"with >= {args.min_active} active cells (see Notes for which).",
+             italic=True, border=False)
     cell(ws, r + 2, 1, "Cell teams: 'underpowered' = too many active cells for a 3-min recording "
                        "(needs active cells <= 20% of the 0.5 s time bins), so the group mean "
                        "covers only the wells where the test ran.", italic=True, border=False)
@@ -402,12 +549,35 @@ def main():
     # ------------------------------------------------------------ Group Events
     ge = book.create_sheet("Group Events")
     fills = header_rows(ge, plan, groups, "")
-    n_max = max(len(bursts[w]) for w in wells)
-    first_ev, last_ev = 5, 4 + max(n_max, 1)
-    cell(ge, 3, 1, "Total group events (network bursts)", bold=True)
-    cell(ge, 4, 1, "percent_of_network, per event:", bold=True, fill="F2F2F2")
-    for k in range(max(n_max, 1)):
-        cell(ge, first_ev + k, 1, f"Event {k + 1}")
+    # Event rows. On quadrant plates the rows are grouped by quadrant: a burst belongs to ONE
+    # quadrant's own 3-min movie, and quadrants were filmed at different times, so bursts
+    # are never lined up across quadrants. Each value shows when in its movie it happened.
+    def events_of(w, quad):
+        b = bursts[w]
+        if quad is not None:
+            b = b[b["quadrant"].astype(str) == quad] if "quadrant" in b else b.iloc[0:0]
+        return list(zip(b.get("percent_of_network", []), b.get("time_seconds", [])))
+    if multi:
+        quads = sorted({str(q) for w in wells if "quadrant" in bursts[w]
+                        for q in bursts[w]["quadrant"]}) or ["1"]
+        layout_rows = []
+        for q in quads:
+            layout_rows.append(("header", q, None))
+            n_q = max(len(events_of(w, q)) for w in wells)
+            layout_rows += [("event", q, k) for k in range(max(n_q, 1))]
+    else:
+        n_max = max(len(bursts[w]) for w in wells)
+        layout_rows = [("event", None, k) for k in range(max(n_max, 1))]
+    first_ev, last_ev = 5, 4 + len(layout_rows)
+    cell(ge, 3, 1, "Total group events in the well (quadrants used)" if multi
+         else "Total group events (network bursts)", bold=True)
+    cell(ge, 4, 1, "percent_of_network, per event (and when it happened):", bold=True,
+         fill="F2F2F2")
+    for rr, (kind_r, q, k) in enumerate(layout_rows, first_ev):
+        if kind_r == "header":
+            cell(ge, rr, 1, f"Quadrant {q} (_s{q})", bold=True, fill="F2F2F2")
+        else:
+            cell(ge, rr, 1, f"  burst {k + 1}" if multi else f"Event {k + 1}")
     avg_row = last_ev + 1
     cell(ge, avg_row, 1, "Average percent_of_network", bold=True)
     for i, (kind, g, w) in enumerate(plan):
@@ -415,24 +585,44 @@ def main():
         L = get_column_letter(c)
         cell(ge, 4, c, fill="F2F2F2")
         if kind == "well":
-            pct = list(bursts[w]["percent_of_network"]) if "percent_of_network" in bursts[w] else []
-            cell(ge, 3, c, f"=COUNT({L}{first_ev}:{L}{last_ev})", fmt="0", bold=True, align="right")
-            for k in range(max(n_max, 1)):
-                v = pct[k] / 100.0 if k < len(pct) and pd.notna(pct[k]) else None
-                cell(ge, first_ev + k, c, v, fmt="0.0%", align="right")
+            if multi and not n_sync[w]:
+                cell(ge, 3, c, "n/a", bold=True, align="right", color="808080")
+            else:
+                cell(ge, 3, c, f"=COUNT({L}{first_ev}:{L}{last_ev})", fmt="0", bold=True,
+                     align="right")
+            for rr, (kind_r, q, k) in enumerate(layout_rows, first_ev):
+                if kind_r == "header":
+                    cell(ge, rr, c, fill="F2F2F2")
+                    continue
+                ev = events_of(w, q)
+                if k < len(ev) and pd.notna(ev[k][0]):
+                    pct_v, t = ev[k]
+                    # The time rides in the number format, so the cell stays a plain number
+                    # that COUNT / AVERAGE (and copy-paste into Prism) still read.
+                    tag = f' "at {float(t):.1f} s"' if pd.notna(t) else ""
+                    cell(ge, rr, c, float(pct_v) / 100.0, fmt=f"0.0%{tag}", align="right")
+                else:
+                    cell(ge, rr, c, None)
             cell(ge, avg_row, c, f'=IFERROR(AVERAGE({L}{first_ev}:{L}{last_ev}),"none")',
                  fmt="0.0%", bold=True, align="right")
         else:
             for rr, f in ((3, "0.0"), (avg_row, "0.0%")):
                 cell(ge, rr, c, stat_formula(kind, rr, plan, i), fmt=f, italic=True,
                      fill=fills[g], align="right")
-            for k in range(max(n_max, 1)):
-                cell(ge, first_ev + k, c, fill=fills[g])
+            for rr in range(first_ev, last_ev + 1):
+                cell(ge, rr, c, fill=fills[g])
     cell(ge, avg_row + 2, 1,
-         "percent_of_network = share of the well's active cells that fired together at the "
-         "burst peak (from each well's 'Group Events (bursts)' sheet). Blank = the well had "
-         "fewer events. The group mean of 'Average percent_of_network' covers only wells "
+         "percent_of_network = share of the active cells (of that quadrant, on quadrant plates) "
+         "that fired together at the burst peak; 'at N s' = when in that movie it happened. "
+         "Blank = fewer events. The group mean of 'Average percent_of_network' covers only wells "
          "that had at least one event.", italic=True, border=False)
+    if multi:
+        cell(ge, avg_row + 3, 1,
+             f"Rows are grouped by quadrant; only quadrants with >= {args.min_active} active cells "
+             "are used. Quadrants were filmed one after another, so bursts in different quadrants "
+             "are separate events and are never lined up by time. Wells differ in how many quadrants were "
+             "usable (Key Numbers, '...measured from how many cells'), so for comparing wells use "
+             "'Network bursts (per 3-min quadrant)' on Key Numbers.", italic=True, border=False)
 
     # ------------------------------------------------------------ Statistics + Graphs
     gw = {g: [w for k, gg, w in plan if k == "well" and gg == g] for g in groups}
@@ -469,7 +659,20 @@ def main():
     for i, (a, b) in enumerate(rows, 1):
         cell(nt, i, 1, a, bold=True, border=False)
         cell(nt, i, 2, b, border=False)
-    versions = {(prov[w]["pipeline_fixes_sha256_12"], prov[w]["template_sha256_12"]) for w in wells}
+    if multi:
+        ps = book.create_sheet("Quadrants", index=len(book.sheetnames) - 1)
+        r0 = 1
+        hdr = ["Quadrant", "Cells tracked", "Active cells", "Used for activity",
+               f"Used for synchrony/bursts (>= {args.min_active} active)", "Why not"]
+        for c, h in enumerate(hdr, 1):
+            cell(ps, r0, c, h, bold=True, fill="D9D9D9")
+        for i, row in enumerate(pos_rows, 1):
+            for c, v in enumerate(row, 1):
+                cell(ps, r0 + i, c, v, color="808080" if row[3] == "no" else None)
+        for c, wdt in zip("ABCDEF", (12, 14, 13, 18, 38, 34)):
+            ps.column_dimensions[c].width = wdt
+        ps.freeze_panes = "A2"
+    versions = {(v["pipeline_fixes_sha256_12"], v["template_sha256_12"]) for v in prov_rec.values()}
     if len(versions) > 1:
         cell(nt, len(rows) + 2, 1, "WARNING", bold=True, color="FF0000", border=False)
         cell(nt, len(rows) + 2, 2, "Wells were made by different code versions - do not "
@@ -482,6 +685,9 @@ def main():
         for c in range(2, 2 + len(plan)):
             sh.column_dimensions[get_column_letter(c)].width = 10
         sh.freeze_panes = "B3"
+    for i, (kind, _g, _w) in enumerate(plan):   # room for "73.1% at 37.6 s"
+        if kind == "well":
+            ge.column_dimensions[get_column_letter(2 + i)].width = 17
     ws.column_dimensions[get_column_letter(note_col)].width = 90
     nt.column_dimensions["A"].width = 36
     nt.column_dimensions["B"].width = 110

@@ -15,7 +15,37 @@ context lives in the parent project's `CLAUDE.md`, not here.
   **scientific code**, VENDORED from the parent project (see sync boundary).
 - `tools/analyze_folder.py` — stages 1→2→3 over a folder of TIFs, each in its own env (found
   via `CNP_CONDA_BASE` or `sys.prefix`); copies workbooks to `<folder>/RESULTS/`. Repo-native glue.
-- `tools/batch_suite2p.py` (stage 1, mirrored from the parent), `tools/compare_plate.py`.
+- `tools/batch_suite2p.py` (stage 1) and `tools/apply_cell_rule.py` (stage 1b), both
+  mirrored from the parent — keep them **byte-identical** to the lab copies (`cmp` them);
+  `tests/test_stage1b.py` is identical in both repos too. `tools/compare_plate.py` = the lab's
+  version (quadrant pooling `<well>_s1..s4` → one whole-well value, `--min-active 5` for
+  synchrony/burst/team rows) + accepting `<rec>_metrics.xlsx` names; on plates 2354 and 09-28
+  it writes the same comparison workbook as the lab tool (0 differing rows, 2026-10-10).
+- **Stage 1b — cells by size** (adopted in the parent 2026-10-10): every Suite2p ROI with
+  equivalent diameter ≥ the profile's `min_cell_diameter_um` (default 8) is a cell; Suite2p's
+  classifier is ignored (always on, at chance on iNeurons, skew-lookup off-by-one). Pixel size
+  from the TIF (MetaMorph `spatial-calibration-x`), else the profile's `um_per_px` fallback
+  (analyze_folder retries with it only on a missing-calibration error), else a hard failure —
+  never guessed. Writes `iscell_suite2p.npy` (backup), `cell_rule.json`; moves now-stale
+  CASCADE output to `_stale_pre_cell_rule/`. analyze_folder runs it per recording after
+  stage 1 and redoes stages 2–3 when `cell_rule.json` is newer than the workbook. The
+  Suite2p-output GUI modes do NOT apply it (they take the user's `iscell.npy` as given).
+- **Dark final frames**: batch_suite2p drops ≤5 trailing frames after an abrupt drop
+  (`find_dark_tail`), via a trimmed scratch copy; record in `plane0/frame_trim.json`.
+- **Detection profiles** (`tools/detection_profiles.py`): built-in JSON in
+  `settings/detection_profiles/` (default "Lippmann iNeurons, 10X" = 12 **px**, kept in px on
+  purpose: 16.4 µm → 12.009 px, which would count as a different setting and force re-runs;
+  "Lippmann iNeurons, 20X" = 24 px at 0.685 µm/px — never pool 10X with 20X);
+  user profiles in `<install>/profiles/` (outside the code, so updates keep them). A profile →
+  batch_suite2p `--diameter|--diameter-um --cellprob-threshold --flow-threshold --img`.
+  batch_suite2p treats a finished recording as done only if its ops.npy detection matches
+  (else REDO + removes stale cascade/metrics files), writes `plane0/detection_settings.json`;
+  analyze_folder refuses stages 2–3 on mismatched detection and passes `detection_expected`
+  to the run_pipeline guard; run_group warns on mixed detection. Defaults reproduce the old
+  settings dict exactly (verified) and all lab plates dry-run as done.
+- `tools/preview_detection.py` (suite2p env): Suite2p's own `anatomical.select_rois` on a
+  meanImg/max_proj built like `detection_wrapper` (no registration, first N frames). On B05 its
+  images match Suite2p's (r = 1.0 mean, 0.994 max_proj).
 - `install/` — `install_windows.ps1` (must stay ASCII: PowerShell 5.1), `install_mac.sh`,
   `self_test.py`. Version pins live in BOTH installers AND `self_test.py` EXPECTED — change
   all three together. They equal the parent project's verified envs.

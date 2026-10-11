@@ -11,7 +11,10 @@ from pathlib import Path
 import openpyxl
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from pipeline.run_group import build_comparison, read_summary, GroupError, _guess_group
+import json
+
+from pipeline.run_group import (build_comparison, read_summary, GroupError, _guess_group,
+                                _scan_workbooks)
 
 
 def _make_metrics_workbook(path, *, pct_active, sttc_z, event_source="CASCADE discrete spikes (calibrated)"):
@@ -99,6 +102,52 @@ def test_missing_summary_sheet_errors():
         raise AssertionError("expected GroupError for a workbook with no Summary sheet")
 
 
+def test_scan_counts_each_recording_once():
+    """analyze_folder keeps a workbook in plane0 AND a copy in RESULTS/; set-aside
+    re-runs live in suite2p_previous_*/. A scan must return each recording once."""
+    with tempfile.TemporaryDirectory() as d:
+        d = Path(d)
+        for rid in ("B05", "C04"):
+            p0 = d / "plate" / rid / "suite2p" / "plane0"
+            p0.mkdir(parents=True)
+            _make_metrics_workbook(p0 / f"{rid}_metrics.xlsx", pct_active=10, sttc_z=2.0)
+        old = d / "plate" / "B05" / "suite2p_previous_20261009-120000" / "plane0"
+        old.mkdir(parents=True)
+        _make_metrics_workbook(old / "B05_metrics.xlsx", pct_active=99, sttc_z=9.0)
+        res = d / "plate" / "RESULTS"
+        res.mkdir()
+        _make_metrics_workbook(res / "B05_metrics.xlsx", pct_active=10, sttc_z=2.0)
+        _make_metrics_workbook(res / "C04_metrics.xlsx", pct_active=10, sttc_z=2.0)
+        found = _scan_workbooks(d)
+        names = sorted(p.name for p in found)
+        assert names == ["B05_metrics.xlsx", "C04_metrics.xlsx"], found
+        assert all("suite2p_previous" not in str(p) for p in found), found
+    print("PASS test_scan_counts_each_recording_once")
+
+
+def test_mixed_detection_warns():
+    with tempfile.TemporaryDirectory() as d:
+        d = Path(d)
+        items = []
+        for rid, prof, diam in (("A", "Profile 10X", 12.0), ("B", "Profile 20X", 24.0)):
+            p0 = d / rid / "suite2p" / "plane0"
+            p0.mkdir(parents=True)
+            _make_metrics_workbook(p0 / f"{rid}_metrics.xlsx", pct_active=10, sttc_z=2.0)
+            (p0 / "detection_settings.json").write_text(json.dumps(
+                {"profile": prof, "diameter_px": diam, "cellprob_threshold": 0.0,
+                 "flow_threshold": 0.4, "img": "meanImg"}))
+            items.append({"path": str(p0 / f"{rid}_metrics.xlsx"), "group": rid})
+        out = d / "cmp.xlsx"
+        build_comparison(items, out)
+        wb = openpyxl.load_workbook(out)
+        how = "\n".join(str(r[0]) for r in wb["How to read"].iter_rows(values_only=True) if r and r[0])
+        assert "DIFFERENT cell-detection settings" in how and "Profile 20X" in how, how
+        col = [c.value for c in wb["Per recording"][1]].index("Cell detection")
+        assert [r[col] for r in wb["Per recording"].iter_rows(min_row=2, values_only=True)] == \
+            ["Profile 10X", "Profile 20X"]
+    print("PASS test_mixed_detection_warns")
+
+
 def test_guess_group():
     assert _guess_group("x/SS9_KOLFs/2169_metrics.xlsx") == "jGCaMP8s"
     assert _guess_group("x/SS10_thing/6_metrics.xlsx") == "jGCaMP8f"
@@ -112,4 +161,6 @@ if __name__ == "__main__":
     test_mixed_event_source_warns()
     test_missing_summary_sheet_errors()
     test_guess_group()
+    test_scan_counts_each_recording_once()
+    test_mixed_detection_warns()
     print("\nALL run_group TESTS PASSED")

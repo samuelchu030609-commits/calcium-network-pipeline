@@ -4,7 +4,12 @@ A small point-and-click front-end that runs in your web browser, entirely on you
 computer. It has four modes:
 
 - **From microscope files** — all three stages, starting from a folder of `.tif`
-  movies: Suite2p → CASCADE → metrics. It runs `tools/analyze_folder.py` in the
+  movies: Suite2p → cell rule → CASCADE → metrics. Cells are outlined with a chosen
+  **detection profile** (built-in, or the lab's own, made and previewed on one recording
+  in the same page; see "Your cells: a detection profile" in
+  [HOW_TO_INSTALL.md](../HOW_TO_INSTALL.md)), and the outlines at least the profile's
+  smallest-cell size across (8 µm by default) are counted as cells, not Suite2p's
+  classifier's choice. It runs `tools/analyze_folder.py` in the
   background, so closing the browser does not stop it, and it collects every workbook
   in `<folder>/RESULTS/`. This mode needs the one-click install
   ([HOW_TO_INSTALL.md](../HOW_TO_INSTALL.md)) and must be opened from its

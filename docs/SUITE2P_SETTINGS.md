@@ -13,6 +13,15 @@ neurons), and your results won't be comparable to everyone else's.
 > of setting these by hand. Then only adjust `fs` and `tau` for your recording
 > (see below). The table is here so you understand *what* you're loading.
 
+> **Different cells or magnification?** The table below is the built-in detection
+> profile *Lippmann iNeurons, 10X* (12-pixel cells at 1.37 µm/pixel). The built-in
+> *Lippmann iNeurons, 20X* profile is the same with a diameter of 24 px (0.685 µm/pixel,
+> 20X water objective). For other cells,
+> make a detection profile in the GUI (cell size, cell-probability and shape thresholds,
+> detection image) and check it with the preview: see "Your cells: a detection profile"
+> in [HOW_TO_INSTALL.md](../HOW_TO_INSTALL.md). The pipeline then compares each
+> recording against the profile chosen for it rather than against this table.
+
 ## 1. Install Suite2p
 
 Follow the official Suite2p installation instructions (their GitHub project).
@@ -35,6 +44,30 @@ Rationale: activity-based detection under-counts quiet KOLF neurons; lowering it
 threshold adds false positives that aren't shape-separable. Anatomical detection
 on the mean image finds cells by shape regardless of activity, giving an unbiased
 denominator for "% of cells active."
+
+## 2b. Which ROIs are cells: by size, not by Suite2p's classifier
+
+After Suite2p, the pipeline's **stage 1b** (`tools/apply_cell_rule.py`) decides which
+ROIs are cells: every ROI whose equivalent diameter (a circle of the same area) is at
+least **8 µm** is a cell, and nothing else. The pixel size comes from the TIF
+(MetaMorph `spatial-calibration-x`) and is never guessed. Suite2p's own labels are kept
+in `iscell_suite2p.npy`; the rule and its counts are recorded in `cell_rule.json`.
+
+Why not Suite2p's classifier: it cannot be switched off (`use_builtin_classifier=False`
+only chooses which classifier file loads), on iPSC-derived neurons it is no better than
+chance at separating confirmed cells from other ROIs, and an off-by-one in its skew
+lookup roughly doubles the ROIs it keeps in recordings that end on a dark, truncated
+frame. The 8 µm floor kept 99.6% of confirmed cells; 10 µm starts to discard real ones.
+
+The main mode applies this automatically. If you run Suite2p yourself, run
+`python tools/apply_cell_rule.py <recording>/suite2p/plane0` (in the `suite2p`
+environment) before stages 2–3; `--um-per-px` gives the pixel size for TIFs that do
+not store it, `--revert` restores Suite2p's labels.
+
+**Dark final frames.** When acquisition stops mid-exposure, the last 1–3 frames are
+partly dark, and every trace ends in a deep dip. `tools/batch_suite2p.py` drops such
+frames (at most 5, and only after an abrupt drop, so slow bleaching is never cut) and
+records what it dropped in `plane0/frame_trim.json`. The raw TIF is never changed.
 
 ## 3. Set these per YOUR recording — you decide, based on your data
 

@@ -138,7 +138,14 @@ are not touched.
    found.
 2. **Choose the indicator** that was imaged (jGCaMP8s, jGCaMP8f or Fluo-4).
    *Getting this right matters:* each indicator uses its own calibrated model.
-3. **Click "Check the folder first".** It reads every file and lists one row per
+3. **Choose the detection profile**: the settings that decide which cells are found.
+   The built-in ones, *Lippmann iNeurons, 10X* and *Lippmann iNeurons, 20X*, suit
+   iPSC-derived neurons imaged at 10X (ImageXpress, 1.37 µm per pixel) or with a 20X
+   water objective (0.685 µm per pixel). Never pool or compare 10X with 20X results:
+   20X resolves more cells.
+   **For other cells or another microscope set-up, make your own profile first** (see
+   [Your cells: a detection profile](#your-cells-a-detection-profile) below).
+4. **Click "Check the folder first".** It reads every file and lists one row per
    recording, with the **frame rate taken from the file's own timestamps**. Nothing is
    changed yet.
    - Rows ending in `run` will be analysed. Rows ending in `SKIP (done)` were already
@@ -146,7 +153,9 @@ are not touched.
    - **"NO RATE"** means your files carry no timestamps (common for TIFs not saved by
      MetaMorph). Open **Options**, type the frame rate you acquired at (in Hz), and click
      Check again.
-4. **Click "Start the analysis".** Progress appears on the page and updates by itself.
+   - **"REDO (detection settings changed)"** means that recording was analysed before
+     with another profile; it will be detected again and its old results replaced.
+5. **Click "Start the analysis".** Progress appears on the page and updates by itself.
 
 **How long it takes** for 3-minute movies (1800 frames, 1024 × 1024 pixels). Most of the
 time goes to motion correction and cell detection:
@@ -180,11 +189,58 @@ Click **📂 Open the RESULTS folder**. It is a new folder inside your recording
 |---|---|
 | `<well>_metrics.xlsx` | **The results for one recording.** Start with the **Key Numbers** sheet: every number has a plain-language explanation beside it. The other sheets hold per-cell values, synchrony, network bursts, and statistical-power notes. |
 | `<well>_metrics_baseline_qc.png` | A quality-control picture: a few cells' traces with the fitted baseline (red). The red line should follow the resting level of each trace. |
+| `<well>_detection_settings.json`, `<well>_cell_rule.json` | The record of how cells were outlined, and which outlines were counted as cells (the size filter, the pixel size, and how many outlines passed). |
 | `run_log_<date>.txt` | The full record of the run. Send this to us if anything looks wrong. |
 
 Next to RESULTS, each recording also gets its own folder (e.g. `B05/suite2p/plane0/`)
 with Suite2p's complete output. You can open it in the Suite2p program to inspect the
 detected cells (see [For advanced users](#for-advanced-users)).
+
+### Your cells: a detection profile
+
+Cell detection depends on how large your cells look in the image, which depends on the
+cell type **and** on the objective and camera. Before analysing a new cell line or
+microscope set-up, make a profile once, on a few **control** recordings:
+
+1. Pick the folder, then open **✏️ Make a profile for your cells** (step 3 on the page).
+2. Set the **cell size**: the typical diameter of one cell body. Micrometres are easiest:
+   the program converts them to pixels using the pixel size each MetaMorph file stores.
+   (Measure a few cells in Fiji if you are unsure.) Use pixels if your files don't
+   record their pixel size; the preview tells you.
+3. Choose a recording and click **Preview cell detection**. You see the image with every
+   cell outlined in orange, outlines too small to count as cells in blue (see the
+   *smallest cell* setting below), and a cyan circle showing the size you entered.
+   On a Mac the whole image takes 1–2 minutes; on Windows start with the **small centre
+   area** (about 3 minutes).
+4. Adjust and preview again until the outlines sit on the cells:
+   - outlines much smaller or larger than the cells → change the **cell size**;
+   - faint cells missed → **lower** the *cell-probability threshold*;
+   - outlines on background or debris → **raise** it;
+   - many irregular blobs → **lower** the *shape threshold*;
+   - real cells shown in blue → **lower** the *smallest cell* size; debris or specks
+     shown in orange → raise it.
+   Check two or three recordings, including a dense and a sparse one.
+5. Type a **name** (e.g. *Smith lab, HEK-iNeurons, 20X*) and notes, and click **Save as a
+   new profile**. It now appears in the profile list for every analysis.
+
+**Which outlines count as cells.** Every outline at least the profile's **smallest
+cell** size across (8 µm by default; measured as the diameter of a circle with the
+outline's area) is a cell, and every smaller one is not. Suite2p's own automatic cell
+classifier is *not* used: on iPSC-derived neurons it was no better than chance at
+telling cells from other outlines, and it often rejected large, bright cell bodies. Measuring in micrometres needs the pixel size, which MetaMorph
+TIFs store. If your files do not, the analysis stops at the first recording and says
+so: enter the **pixel size** of your objective and camera in the profile. The pixel
+size stored in a file always takes priority over the profile's.
+
+**Then keep it fixed.** Use the same profile for every recording of an experiment, and
+choose it *before* looking at group differences, so the settings cannot be tuned to
+produce a result. Each recording's settings are saved next to its results
+(`RESULTS/<well>_detection_settings.json`), and the **Compare recordings** page warns you if
+the recordings you compare were detected with different settings.
+
+Your profiles are stored in the install folder (`C:\iNeuron-NetSync\profiles` or
+`~/iNeuron-NetSync/profiles`), so updating the program keeps them. To share one with
+another lab, send them that `.json` file to put in the same folder.
 
 ### Comparing groups (optional)
 
@@ -199,6 +255,13 @@ recording, and it reports per-group means and a two-group contrast.
 Download the ZIP again (Step W1 / M1) and run the installer again (Step W2 / M2). It
 takes a few minutes: it only replaces the program code and keeps everything else.
 **Your recordings and results are never touched.**
+
+**If you analysed recordings before October 2026:** that version counted cells with
+Suite2p's classifier. The next time you run such a folder, each recording's cells are
+chosen by size instead (the outlines themselves are kept, so this takes seconds), and
+the recordings whose cell list changes are analysed again (CASCADE and metrics), with
+their workbooks replaced. Suite2p's original choice is kept in each recording's
+`suite2p/plane0/iscell_suite2p.npy`.
 
 ## Running the self-test again
 
@@ -238,6 +301,7 @@ send that file along with any question.
 | **Check** says files **"could not be verified as one continuous recording"** | Parts of a split recording (`-file002`) do not join up in time: a part is missing or belongs to another recording. Check the files in that folder. |
 | **"No `.tif` files directly inside this folder"** | Pick the folder that holds the movies themselves, not a folder above it. |
 | A recording shows **0 cells** / **FAILED: no ROIs were found** | Suite2p found no cells. This is typical of fields at the well edge or with no neurons in view. Check the movie in Fiji. |
+| A recording shows **FAILED: cells not chosen (stage 1b)** with *"does not record its pixel size"* | Your TIFs do not store their pixel size, so cell sizes cannot be measured in micrometres. Open **✏️ Make a profile for your cells**, enter the **pixel size** (µm per pixel) of your objective and camera, save the profile, and start again. |
 | A **red WARNING about detection settings** | The Suite2p output was not made with this pipeline's cell-detection settings, so the numbers are not comparable with other runs. It cannot happen in **From microscope files** mode. |
 
 ---
@@ -258,7 +322,10 @@ send that file along with any question.
 - **Starting from your own Suite2p output** (already-segmented recordings): use the
   *One Suite2p recording* or *Batch of Suite2p recordings* modes. Your detection
   settings must match ours ([docs/SUITE2P_SETTINGS.md](docs/SUITE2P_SETTINGS.md)), or
-  the numbers are not comparable.
+  the numbers are not comparable. These modes use the cells as your Suite2p output marks
+  them (`iscell.npy`); to choose them by size as the main mode does, first run
+  `tools/apply_cell_rule.py <recording>/suite2p/plane0` with the `suite2p` environment's
+  Python.
 - **Exact versions** installed: see `install/install_windows.ps1` / `install/install_mac.sh`.
   These are the versions the reference numbers were produced with. Changing them, torch
   above all, can change which cells are detected.

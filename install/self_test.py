@@ -12,6 +12,8 @@ spot, so no recordings are needed, and it writes only to a temporary folder.
            (STTC z >= 3) and at least one network burst detected
   Check 3  all three stages, starting from a small synthetic microscope movie
            (.tif): Suite2p must detect cells and a metrics workbook must appear
+  Check 4  the cell-detection preview (tools/preview_detection.py) on that kind of
+           movie must outline the planted cells
 
 Run with the `analysis` environment's Python, with CNP_CONDA_BASE pointing at the
 install's miniforge3 folder (the installers and launchers set this).
@@ -75,7 +77,13 @@ for cy, cx in centers:
     trace = 1.0 + 1.5 * np.convolve(spikes, kernel)[:T]
     movie += 250.0 * shape[None] * trace[:, None, None]
 movie += rng.normal(0, 8, movie.shape)
-tifffile.imwrite(sys.argv[1], np.clip(movie, 0, 65535).astype(np.uint16))
+# The pixel size MetaMorph stores (10X: 1.3656 um/px), which stage 1b needs to measure
+# cells in micrometres: the 12 px somata are then ~16 um across, above the 8 um filter.
+desc = ('<MetaData><prop id="spatial-calibration-x" type="float" value="1.3656"/>'
+        '<prop id="spatial-calibration-y" type="float" value="1.3656"/>'
+        '<prop id="spatial-calibration-units" type="string" value="um"/>'
+        '<prop id="spatial-calibration-state" type="bool" value="on"/></MetaData>')
+tifffile.imwrite(sys.argv[1], np.clip(movie, 0, 65535).astype(np.uint16), description=desc)
 """
 
 
@@ -84,7 +92,7 @@ def say(msg=""):
 
 
 def check_versions(base: Path) -> bool:
-    say("Check 1/3  package versions")
+    say("Check 1/4  package versions")
     good = True
     for env, want in EXPECTED.items():
         py = env_python(base, env)
@@ -112,7 +120,7 @@ def check_versions(base: Path) -> bool:
 
 
 def check_planted(base: Path, tmp: Path) -> bool:
-    say("\nCheck 2/3  stages 2-3 on a synthetic recording with known structure")
+    say("\nCheck 2/4  stages 2-3 on a synthetic recording with known structure")
     out = tmp / "planted"
     analysis = env_python(base, "analysis")
     r = subprocess.run([str(analysis), str(REPO / "examples" / "make_example.py"), str(out)],
@@ -150,7 +158,7 @@ def check_planted(base: Path, tmp: Path) -> bool:
 
 
 def check_full(base: Path, tmp: Path) -> bool:
-    say("\nCheck 3/3  all three stages, starting from a synthetic microscope movie")
+    say("\nCheck 3/4  all three stages, starting from a synthetic microscope movie")
     say("           (Suite2p + Cellpose on the CPU: usually 1-3 minutes)")
     folder = tmp / "movie"
     folder.mkdir()
@@ -165,10 +173,18 @@ def check_full(base: Path, tmp: Path) -> bool:
     log = r.stdout + r.stderr
     (tmp / "full_log.txt").write_text(log, encoding="utf-8")
     cells = re.search(r"-> \S+: (\d+)/(\d+) cells", log)
-    n_cells = int(cells.group(1)) if cells else 0
+    n_rois = int(cells.group(2)) if cells else 0
+    import json
+    rule_files = list((folder / "RESULTS").glob("*_cell_rule.json"))
+    try:
+        n_rule = json.loads(rule_files[0].read_text())["n_cells"] if rule_files else 0
+    except Exception:
+        n_rule = 0
     checks = [
-        ("Suite2p ran and detected cells" + (f" ({n_cells} found, 25 planted)" if cells else ""),
-         n_cells > 0),
+        ("Suite2p ran and outlined cells" + (f" ({n_rois} found, 25 planted)" if cells else ""),
+         n_rois > 0),
+        ("cells chosen by size (stage 1b)" + (f": {n_rule} of {n_rois}" if rule_files else ""),
+         n_rule > 0),
         ("CASCADE + metrics produced a workbook", any((folder / "RESULTS").glob("*_metrics.xlsx"))),
         ("run finished without errors", r.returncode == 0),
     ]
@@ -181,6 +197,29 @@ def check_full(base: Path, tmp: Path) -> bool:
     return True
 
 
+def check_preview(base: Path, tmp: Path) -> bool:
+    say("\nCheck 4/4  the cell-detection preview")
+    import json
+    movie = tmp / "preview_movie.tif"
+    out = tmp / "preview.npz"
+    py = str(env_python(base, "suite2p"))
+    r = subprocess.run([py, "-c", MOVIE_SNIPPET, str(movie)], capture_output=True, text=True)
+    if r.returncode == 0:
+        r = subprocess.run([py, str(REPO / "tools" / "preview_detection.py"), str(movie),
+                            "--out", str(out), "--fps", "10", "--diameter", "12"],
+                           capture_output=True, text=True, encoding="utf-8", errors="replace")
+    try:
+        n = json.loads(r.stdout.strip().splitlines()[-1])["n_cells"]
+    except Exception:
+        n = None
+    passed = r.returncode == 0 and out.is_file() and n is not None and n >= 20
+    say(f"  {'ok  ' if passed else 'FAIL'}  preview outlined the planted cells"
+        + (f" ({n} found, 25 planted)" if n is not None else ""))
+    if not passed:
+        say((r.stdout + r.stderr)[-3000:])
+    return passed
+
+
 def main() -> int:
     base = conda_base()
     if base is None:
@@ -190,7 +229,8 @@ def main() -> int:
     say("SELF-TEST - checking that the pipeline is installed correctly")
     say("=" * 64)
     tmp = Path(tempfile.mkdtemp(prefix="cnp_selftest_"))
-    results = [check_versions(base), check_planted(base, tmp), check_full(base, tmp)]
+    results = [check_versions(base), check_planted(base, tmp), check_full(base, tmp),
+               check_preview(base, tmp)]
     if all(results):
         shutil.rmtree(tmp, ignore_errors=True)
     else:
