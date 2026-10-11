@@ -17,7 +17,10 @@ context lives in the parent project's `CLAUDE.md`, not here.
   via `CNP_CONDA_BASE` or `sys.prefix`); copies workbooks to `<folder>/RESULTS/`. Repo-native glue.
 - `tools/batch_suite2p.py` (stage 1) and `tools/apply_cell_rule.py` (stage 1b), both
   mirrored from the parent — keep them **byte-identical** to the lab copies (`cmp` them);
-  `tests/test_stage1b.py` is identical in both repos too. `tools/compare_plate.py`.
+  `tests/test_stage1b.py` is identical in both repos too. `tools/compare_plate.py` = the lab's
+  version (quadrant pooling `<well>_s1..s4` → one whole-well value, `--min-active 5` for
+  synchrony/burst/team rows) + accepting `<rec>_metrics.xlsx` names; on plates 2354 and 09-28
+  it writes the same comparison workbook as the lab tool (0 differing rows, 2026-10-10).
 - **Stage 1b — cells by size** (adopted in the parent 2026-10-10): every Suite2p ROI with
   equivalent diameter ≥ the profile's `min_cell_diameter_um` (default 8) is a cell; Suite2p's
   classifier is ignored (always on, at chance on iNeurons, skew-lookup off-by-one). Pixel size
